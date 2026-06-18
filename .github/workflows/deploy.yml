@@ -1,4 +1,4 @@
-```yaml
+yaml
 name: Deploy to GitHub Pages
 
 on:
@@ -57,4 +57,3 @@ jobs:
       - name: Deploy website
         id: deployment
         uses: actions/deploy-pages@v4
-```
