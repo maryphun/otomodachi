@@ -144,10 +144,6 @@ onMounted(loadCustomers)
           ×
         </button>
       </div>
-
-      <p class="search-help">
-        ひらがな・カタカナ・漢字で検索できます
-      </p>
     </section>
 
     <section class="result-section">

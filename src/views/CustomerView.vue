@@ -183,29 +183,103 @@ const chartPolylinePoints = computed(() => {
     .join(' ')
 })
 
-function formatChartTime(timestamp) {
-  const value = String(timestamp || '')
-  const parts = value.split(' ')
+const chartAxisLabels = computed(() => {
+  const points = chartPoints.value
 
-  if (parts.length < 2) {
-    return value
+  if (points.length === 0) {
+    return []
   }
 
-  return parts[1].slice(0, 5)
+  const labels = []
+  let lastDate = ''
+
+  for (let index = 0; index < points.length; index++) {
+    const point = points[index]
+    const dateText = formatChartDate(point.timestamp)
+
+    if (dateText && dateText !== lastDate) {
+      labels.push({
+        ...point,
+        anchor: getChartTextAnchor(point.x),
+        text: dateText,
+      })
+
+      lastDate = dateText
+    }
+  }
+
+  return labels
+})
+
+const chartValueLabels = computed(() => {
+  const points = chartPoints.value
+
+  if (points.length === 0) {
+    return []
+  }
+
+  const labels = []
+  let lastLabelX = Number.NEGATIVE_INFINITY
+  const minimumGap = 92
+
+  for (const point of points) {
+    if (point.x - lastLabelX < minimumGap) {
+      continue
+    }
+
+    labels.push({
+      ...point,
+      anchor: getChartTextAnchor(point.x),
+      labelY: getChartValueLabelY(point),
+      text: formatNumber(point.balance),
+    })
+
+    lastLabelX = point.x
+  }
+
+  return labels
+})
+
+function getChartTextAnchor(x) {
+  if (x <= chartPaddingX + 4) {
+    return 'start'
+  }
+
+  if (x >= chartWidth - chartPaddingX - 4) {
+    return 'end'
+  }
+
+  return 'middle'
+}
+
+function getChartValueLabelY(point) {
+  const labelAboveY = point.y - 11
+
+  if (labelAboveY < 11) {
+    return point.y + 20
+  }
+
+  return labelAboveY
+}
+
+function formatChartDate(timestamp) {
+  const value = String(timestamp || '')
+  const parts = value.split(' ')
+  const datePart = parts[0] || ''
+
+  const dateParts = datePart
+    .replaceAll('-', '/')
+    .split('/')
+
+  if (dateParts.length < 3) {
+    return datePart
+  }
+
+  return `${Number(dateParts[1])}/${Number(dateParts[2])}`
 }
 
 async function scrollChartToNewest() {
   await nextTick()
-
-  const chartElement = historyChartScroll.value
-
-  if (!chartElement) {
-    return
-  }
-
-  chartElement.scrollLeft =
-    chartElement.scrollWidth -
-    chartElement.clientWidth
 }
 
 function addAmountDigit(digit) {
@@ -267,6 +341,13 @@ function formatSignedNumber(value) {
   }
 
   return formatNumber(number)
+}
+
+function getBalanceBefore(transaction) {
+  return (
+    Number(transaction.balanceAfter || 0) -
+    Number(transaction.chipChange || 0)
+  )
 }
 
 async function loadCustomer() {
@@ -1009,52 +1090,26 @@ onMounted(loadCustomer)
           </g>
 
           <text
-            :x="chartPaddingX"
-            :y="16"
-            class="chart-label"
+            v-for="label in chartValueLabels"
+            :key="`value-${label.transactionId}`"
+            :x="label.x"
+            :y="label.labelY"
+            :text-anchor="label.anchor"
+            class="chart-value-label"
           >
-            {{ formatNumber(chartMaximumBalance) }}
+            {{ label.text }}
           </text>
 
           <text
-            :x="chartPaddingX"
+            v-for="label in chartAxisLabels"
+            :key="`time-${label.transactionId}`"
+            :x="label.x"
             :y="chartHeight - 5"
-            class="chart-label"
-          >
-            {{ formatNumber(chartMinimumBalance) }}
-          </text>
-
-          <text
-            v-if="chartPoints.length"
-            :x="chartPoints[0].x"
-            :y="chartHeight - 5"
-            text-anchor="middle"
+            :text-anchor="label.anchor"
             class="chart-time-label"
           >
             {{
-              formatChartTime(
-                chartPoints[0].timestamp,
-              )
-            }}
-          </text>
-
-          <text
-            v-if="chartPoints.length > 1"
-            :x="
-              chartPoints[
-                chartPoints.length - 1
-              ].x
-            "
-            :y="chartHeight - 5"
-            text-anchor="middle"
-            class="chart-time-label"
-          >
-            {{
-              formatChartTime(
-                chartPoints[
-                  chartPoints.length - 1
-                ].timestamp,
-              )
+              label.text
             }}
           </text>
         </svg>
@@ -1077,32 +1132,42 @@ onMounted(loadCustomer)
           {{ transaction.timestamp }}
         </div>
 
-        <div
-          class="history-change"
-          :class="{
-            'history-change--positive':
-              transaction.chipChange > 0,
-            'history-change--negative':
-              transaction.chipChange < 0,
-          }"
-        >
-          {{
-            formatSignedNumber(
-              transaction.chipChange,
-            )
-          }}
-        </div>
-
-        <div class="history-balance">
-          <span>変更後</span>
-
-          <strong>
+        <div class="history-values">
+          <div
+            class="history-change"
+            :class="{
+              'history-change--positive':
+                transaction.chipChange > 0,
+              'history-change--negative':
+                transaction.chipChange < 0,
+            }"
+          >
             {{
-              formatNumber(
-                transaction.balanceAfter,
+              formatSignedNumber(
+                transaction.chipChange,
               )
             }}
-          </strong>
+          </div>
+
+          <div class="history-balance-flow">
+            <span class="history-balance-before">
+              {{
+                formatNumber(
+                  getBalanceBefore(transaction),
+                )
+              }}
+            </span>
+
+            <span class="history-balance-arrow">→</span>
+
+            <strong class="history-balance-after">
+              {{
+                formatNumber(
+                  transaction.balanceAfter,
+                )
+              }}
+            </strong>
+          </div>
         </div>
       </div>
     </div>
@@ -1821,7 +1886,7 @@ h1 {
 
 .history-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
 
@@ -1838,8 +1903,11 @@ h1 {
 }
 
 .history-change {
+  min-width: 88px;
+
   font-size: 17px;
   font-weight: 850;
+  text-align: right;
 }
 
 .history-change--positive {
@@ -1850,23 +1918,62 @@ h1 {
   color: #a62c36;
 }
 
-.history-balance {
+.history-values {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 18px;
+
+  min-width: 245px;
   text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
-.history-balance span,
-.history-balance strong {
-  display: block;
-}
+.history-balance-flow {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
 
-.history-balance span {
   color: var(--color-muted);
-  font-size: 10px;
+  font-size: 14px;
+  font-weight: 750;
+  white-space: nowrap;
 }
 
-.history-balance strong {
-  margin-top: 2px;
-  font-size: 15px;
+.history-balance-before {
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.history-balance-arrow {
+  color: var(--color-muted);
+  font-size: 12px;
+  opacity: 0.72;
+}
+
+.history-balance-after {
+  color: var(--color-text);
+  font-size: 16px;
+  font-weight: 850;
+}
+
+@media (max-width: 460px) {
+  .history-item {
+    grid-template-columns: 1fr;
+  }
+
+  .history-values {
+    justify-content: space-between;
+
+    min-width: 0;
+    width: 100%;
+  }
+
+  .history-change {
+    min-width: 0;
+    text-align: left;
+  }
 }
 
 .state-card,
@@ -1988,26 +2095,23 @@ h1 {
 }
 
 .history-chart-scroll {
-    width: 100%;
-    max-width: 100%;
+  width: 100%;
+  max-width: 100%;
 
-    overflow-x: auto;
-    overflow-y: hidden;
+  overflow: hidden;
 
-    overscroll-behavior-x: contain;
-    overscroll-behavior-y: none;
+  overscroll-behavior: none;
 
-    -webkit-overflow-scrolling: touch;
-    touch-action: pan-x;
+  touch-action: auto;
 }
 
 .history-chart {
-    display: block;
+  display: block;
 
-    width: 100%;
-    min-width: 520px;
-    max-width: none;
-    height: auto;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
 }
 
 .chart-axis {
@@ -2050,9 +2154,19 @@ h1 {
   font-weight: 700;
 }
 
+.chart-value-label {
+  fill: var(--color-primary-dark);
+  font-size: 10px;
+  font-weight: 850;
+  paint-order: stroke;
+  stroke: white;
+  stroke-linejoin: round;
+  stroke-width: 4px;
+}
+
 .chart-time-label {
   fill: var(--color-muted);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
 }
 
