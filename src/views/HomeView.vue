@@ -4,12 +4,27 @@ import { useRouter } from 'vue-router'
 import { getAllCustomers } from '../services/api'
 import homeBackground from '../assets/home-background.jpg'
 
+import {
+  APP_UPDATE_DATE,
+  APP_VERSION,
+} from '../config/appInfo'
+
 const router = useRouter()
 
 const isRefreshingCustomers = ref(false)
 const refreshMessage = ref('')
 
 const now = new Date()
+
+const formattedUpdateDate =
+  new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(
+    new Date(`${APP_UPDATE_DATE}T00:00:00+09:00`),
+  )
 
 const datePart = new Intl.DateTimeFormat('ja-JP', {
   timeZone: 'Asia/Tokyo',
@@ -166,9 +181,17 @@ async function refreshCustomerList() {
       </section>
     </div>
 
-    <footer class="today-date">
-      {{ todayText }}
+    <footer class="home-footer">
+      <span class="today-date">
+        {{ todayText }}
+      </span>
+     <span class="version-info">
+        Ver. {{ APP_VERSION }}
+        ・
+        更新日 {{ formattedUpdateDate }}
+      </span>
     </footer>
+
   </main>
 </template>
 
@@ -418,16 +441,33 @@ h1 {
   background-position: right bottom;
 }
 
-.today-date {
+.home-footer {
+  position: relative;
+  z-index: 1;
+
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+
   margin-top: 32px;
   padding-top: 18px;
 
   color: var(--color-muted);
   text-align: center;
-  font-size: 14px;
-  font-weight: 600;
 
   border-top: 1px solid var(--color-border);
+}
+
+.today-date {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.version-info {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  opacity: 0.78;
 }
 
 .refresh-section {

@@ -28,17 +28,35 @@
 html,
 body,
 #app {
-  min-width: 320px;
+  min-width: 100%;
   min-height: 100%;
   margin: 0;
+
+  overflow-x: hidden; 
+  overscroll-behavior-x: none;
 }
 
 body {
-  min-height: 100vh;
+  min-height: 100dvh;
+
+  overflow-x: hidden; 
+  overscroll-behavior-x: none;
+
   background: #f4f5f7;
 }
 
 button,
 input {
   font: inherit;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+img,
+svg {
+  max-width: 100%;
 }

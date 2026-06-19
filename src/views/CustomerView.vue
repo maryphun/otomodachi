@@ -1214,10 +1214,16 @@ h1 {
   z-index: 1000;
   inset: 0;
 
+  width: 100%;
+  height: 100dvh;
+
   display: grid;
   place-items: center;
 
   padding: 16px;
+
+  overflow: hidden;
+  overscroll-behavior: none;
 
   background: rgb(10 24 38 / 58%);
   backdrop-filter: blur(6px);
@@ -1225,18 +1231,19 @@ h1 {
 
 .transaction-modal {
   width: min(100%, 520px);
-  max-height: calc(100vh - 32px);
+  max-width: 100%;
+  max-height: calc(100dvh - 32px);
+
+  overflow-x: hidden;
   overflow-y: auto;
+
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 
   padding: 22px;
 
   background: var(--color-surface);
-  border: 1px solid rgb(255 255 255 / 35%);
   border-radius: 28px;
-
-  box-shadow:
-    0 24px 70px rgb(0 0 0 / 25%),
-    0 8px 24px rgb(15 34 53 / 18%);
 }
 
 .modal-eyebrow {
@@ -1680,9 +1687,20 @@ h1 {
 
 .history-chart-scroll {
   width: 100%;
+  max-width: 100%;
+
   overflow-x: auto;
   overflow-y: hidden;
+
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: none;
+
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+
+  scrollbar-width: thin;
 }
+
 
 .history-chart {
   display: block;
@@ -1799,7 +1817,7 @@ h1 {
 
   .transaction-modal {
     width: 100%;
-    max-height: 92vh;
+    max-height: 92dvh;
 
     border-radius: 26px 26px 0 0;
   }
