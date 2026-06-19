@@ -1,4 +1,3 @@
-```vue
 <script setup>
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -12,6 +11,7 @@ const router = useRouter()
 
 const customerName = ref('')
 const initialBalanceText = ref('')
+const profilePublic = ref(false)
 
 const isSaving = ref(false)
 const errorMessage = ref('')
@@ -127,6 +127,7 @@ async function submitCustomer() {
     [
       `お名前：${normalizedName.value}`,
       `初期うにょ：${formatNumber(initialBalance.value)}`,
+      `プロフィール公開：${profilePublic.value ? 'する' : 'しない'}`,
       '',
       'この内容で登録しますか？',
     ].join('\n'),
@@ -143,6 +144,7 @@ async function submitCustomer() {
     const result = await createCustomer(
       normalizedName.value,
       initialBalance.value,
+      profilePublic.value,
     )
 
     const newCustomer = {
@@ -156,6 +158,9 @@ async function submitCustomer() {
           initialBalance.value,
       ),
       lastVisit: result.lastVisit || '',
+      profilePublic: Boolean(
+        result.profilePublic ?? profilePublic.value,
+      ),
     }
 
     /*
@@ -334,6 +339,46 @@ async function submitCustomer() {
         </div>
       </section>
 
+      <section class="form-section">
+        <div class="section-heading">
+          <span class="section-number">
+            3
+          </span>
+
+          <div>
+            <h2>プロフィール公開</h2>
+
+            <p>
+              お客様向けページで情報を公開するか設定します
+            </p>
+          </div>
+        </div>
+
+        <label class="profile-public-setting">
+          <span class="profile-public-copy">
+            <strong>
+              プロフィールを公開する
+            </strong>
+
+            <small>
+              公開する場合、シートには「OK」と保存されます
+            </small>
+          </span>
+
+          <input
+            v-model="profilePublic"
+            type="checkbox"
+            class="switch-input"
+            :disabled="isSaving"
+          />
+
+          <span
+            class="switch-control"
+            aria-hidden="true"
+          ></span>
+        </label>
+      </section>
+
       <p
         v-if="errorMessage"
         class="error-message"
@@ -362,6 +407,19 @@ async function submitCustomer() {
 
           <strong>
             {{ formatNumber(initialBalance) }}
+          </strong>
+        </div>
+
+        <div class="preview-row">
+          <span>プロフィール公開</span>
+
+          <strong
+            :class="{
+              'public-value': profilePublic,
+              'private-value': !profilePublic,
+            }"
+          >
+            {{ profilePublic ? '公開する' : '公開しない' }}
           </strong>
         </div>
 
@@ -740,6 +798,103 @@ h1 {
 .amount-key--utility {
   color: var(--color-primary);
   background: var(--color-primary-soft);
+}
+
+.profile-public-setting {
+  position: relative;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+
+  min-height: 82px;
+  padding: 16px;
+
+  background: #f8fafc;
+  border: 1px solid var(--color-border);
+  border-radius: 18px;
+
+  cursor: pointer;
+}
+
+.profile-public-copy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.profile-public-copy strong {
+  font-size: 15px;
+}
+
+.profile-public-copy small {
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.switch-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.switch-control {
+  position: relative;
+  flex: 0 0 auto;
+
+  width: 56px;
+  height: 32px;
+
+  background: #c8cdd3;
+  border-radius: 999px;
+
+  transition: background-color 180ms ease;
+}
+
+.switch-control::after {
+  content: '';
+
+  position: absolute;
+  top: 4px;
+  left: 4px;
+
+  width: 24px;
+  height: 24px;
+
+  background: white;
+  border-radius: 50%;
+  box-shadow: 0 2px 7px rgb(15 34 53 / 22%);
+
+  transition: transform 180ms var(--ease-out);
+}
+
+.switch-input:checked + .switch-control {
+  background: #2b7a4b;
+}
+
+.switch-input:checked + .switch-control::after {
+  transform: translateX(24px);
+}
+
+.switch-input:focus-visible + .switch-control {
+  outline: 3px solid rgb(23 50 77 / 24%);
+  outline-offset: 3px;
+}
+
+.switch-input:disabled + .switch-control {
+  opacity: 0.55;
+}
+
+.public-value {
+  color: #197044;
+}
+
+.private-value {
+  color: var(--color-muted);
 }
 
 .registration-preview {

@@ -1,4 +1,3 @@
-vue
 <script setup>
 
 import {
@@ -13,6 +12,7 @@ import {
   addTransaction,
   getCustomer,
   getHistory,
+  updateCustomerProfilePublic,
 } from '../services/api'
 
 import {
@@ -33,10 +33,13 @@ const selectedAction = ref('')
 const isLoading = ref(true)
 const isHistoryLoading = ref(false)
 const isSavingTransaction = ref(false)
+const isSavingProfilePublic = ref(false)
 
 const errorMessage = ref('')
 const transactionError = ref('')
 const transactionSuccess = ref('')
+const profilePublicError = ref('')
+const profilePublicSuccess = ref('')
 
 const amountText = ref('')
 
@@ -278,6 +281,79 @@ async function loadCustomer() {
   }
 }
 
+async function saveProfilePublic(event) {
+  if (!customer.value || isSavingProfilePublic.value) {
+    return
+  }
+
+  const checkbox = event.currentTarget
+  const previousValue = Boolean(
+    customer.value.profilePublic,
+  )
+  const nextValue = Boolean(checkbox.checked)
+
+  const confirmed = window.confirm(
+    nextValue
+      ? 'このお客様のプロフィールを公開しますか？'
+      : 'このお客様のプロフィールを非公開にしますか？',
+  )
+
+  if (!confirmed) {
+    checkbox.checked = previousValue
+    return
+  }
+
+  isSavingProfilePublic.value = true
+  profilePublicError.value = ''
+  profilePublicSuccess.value = ''
+
+  customer.value = {
+    ...customer.value,
+    profilePublic: nextValue,
+  }
+
+  try {
+    const result =
+      await updateCustomerProfilePublic(
+        customerCode.value,
+        nextValue,
+      )
+
+    customer.value = {
+      ...customer.value,
+      profilePublic: Boolean(
+        result.profilePublic,
+      ),
+    }
+
+    recordRecentCustomer(customer.value)
+
+    sessionStorage.removeItem(
+      'otomodachi-customers',
+    )
+
+    profilePublicSuccess.value =
+      nextValue
+        ? 'プロフィールを公開しました'
+        : 'プロフィールを非公開にしました'
+  } catch (error) {
+    console.error(error)
+
+    customer.value = {
+      ...customer.value,
+      profilePublic: previousValue,
+    }
+
+    checkbox.checked = previousValue
+
+    profilePublicError.value =
+      error.message ||
+      'プロフィール公開設定の保存に失敗しました'
+  } finally {
+    isSavingProfilePublic.value = false
+  }
+}
+
 async function showHistory() {
   selectedAction.value = 'history'
   transactionError.value = ''
@@ -506,6 +582,64 @@ onMounted(loadCustomer)
 
           <small>うにょ</small>
         </div>
+      </section>
+
+      <section class="profile-public-card">
+        <div class="profile-public-header">
+          <div>
+            <p class="profile-public-label">
+              プロフィール公開
+            </p>
+
+            <strong
+              class="profile-public-status"
+              :class="{
+                'profile-public-status--on':
+                  customer.profilePublic,
+              }"
+            >
+              {{
+                customer.profilePublic
+                  ? '公開中'
+                  : '非公開'
+              }}
+            </strong>
+          </div>
+
+          <label class="profile-public-switch">
+            <input
+              type="checkbox"
+              class="profile-public-input"
+              :checked="customer.profilePublic"
+              :disabled="isSavingProfilePublic"
+              @change="saveProfilePublic"
+            />
+
+            <span
+              class="profile-public-control"
+              aria-hidden="true"
+            ></span>
+          </label>
+        </div>
+
+        <p class="profile-public-description">
+          公開中の場合、Googleシートの
+          「プロフィール公開」欄に「OK」が入ります。
+        </p>
+
+        <p
+          v-if="profilePublicSuccess"
+          class="profile-public-message profile-public-message--success"
+        >
+          {{ profilePublicSuccess }}
+        </p>
+
+        <p
+          v-if="profilePublicError"
+          class="profile-public-message profile-public-message--error"
+        >
+          {{ profilePublicError }}
+        </p>
       </section>
 
       <section class="action-section">
@@ -1108,6 +1242,140 @@ h1 {
 
   color: rgb(255 255 255 / 75%);
   font-size: 13px;
+}
+
+.profile-public-card {
+  margin-top: 16px;
+  padding: 18px;
+
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 22px;
+
+  box-shadow:
+    0 4px 10px rgb(15 34 53 / 4%),
+    0 10px 24px rgb(15 34 53 / 4%);
+}
+
+.profile-public-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.profile-public-label {
+  margin: 0 0 5px;
+
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.profile-public-status {
+  color: var(--color-muted);
+  font-size: 18px;
+}
+
+.profile-public-status--on {
+  color: #197044;
+}
+
+.profile-public-description {
+  margin: 12px 0 0;
+
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.profile-public-switch {
+  position: relative;
+  flex: 0 0 auto;
+
+  display: block;
+
+  cursor: pointer;
+}
+
+.profile-public-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.profile-public-control {
+  position: relative;
+
+  display: block;
+
+  width: 60px;
+  height: 34px;
+
+  background: #c8cdd3;
+  border-radius: 999px;
+
+  transition: background-color 180ms ease;
+}
+
+.profile-public-control::after {
+  content: '';
+
+  position: absolute;
+  top: 4px;
+  left: 4px;
+
+  width: 26px;
+  height: 26px;
+
+  background: white;
+  border-radius: 50%;
+  box-shadow: 0 2px 7px rgb(15 34 53 / 22%);
+
+  transition: transform 180ms var(--ease-out);
+}
+
+.profile-public-input:checked + .profile-public-control {
+  background: #2b7a4b;
+}
+
+.profile-public-input:checked +
+.profile-public-control::after {
+  transform: translateX(26px);
+}
+
+.profile-public-input:focus-visible +
+.profile-public-control {
+  outline: 3px solid rgb(23 50 77 / 24%);
+  outline-offset: 3px;
+}
+
+.profile-public-input:disabled +
+.profile-public-control {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.profile-public-message {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+
+  border-radius: 12px;
+
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.profile-public-message--success {
+  color: #17643d;
+  background: #e8f7ef;
+}
+
+.profile-public-message--error {
+  color: #9a3039;
+  background: #fff0f1;
 }
 
 .action-section {
@@ -1838,4 +2106,3 @@ h1 {
   }
 }
 </style>
-```

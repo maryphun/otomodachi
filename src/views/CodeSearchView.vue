@@ -35,18 +35,6 @@ const suggestedCustomers = computed(() => {
     .slice(0, 6)
 })
 
-const exactCustomer = computed(() => {
-  const input = enteredCode.value.trim()
-
-  if (!input) {
-    return null
-  }
-
-  return customers.value.find((customer) => {
-    return String(customer.customerCode) === input
-  })
-})
-
 function addNumber(number) {
   if (enteredCode.value.length >= 10) {
     return
@@ -114,7 +102,7 @@ onMounted(loadCustomers)
           <div
             class="code-line"
             :class="{ 'code-line--empty': !enteredCode }">
-            {{ enteredCode || '' }}
+            {{ enteredCode || 'コード' }}
           </div>
 
           <input
