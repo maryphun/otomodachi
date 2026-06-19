@@ -1,6 +1,6 @@
 @font-face {
 font-family: "Kiwi Maru";
-src: url("./fonts/MPLUSRounded1c-Regular") format("truetype");
+src: url("./fonts/MPLUSRounded1c-Regular.ttf") format("truetype");
 font-weight: 400;
 font-style: normal;
 font-display: swap;
@@ -17,6 +17,15 @@ font-display: swap;
 --color-muted: #70757d;
 --color-border: #e2e5e9;
 
+--ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+--ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+--shadow-card:
+0 4px 10px rgb(15 34 53 / 5%),
+0 12px 28px rgb(15 34 53 / 7%);
+--shadow-lift:
+0 8px 18px rgb(15 34 53 / 8%),
+0 22px 44px rgb(15 34 53 / 10%);
+
 font-family:
 "Kiwi Maru",
 "Noto Sans JP",
@@ -28,6 +37,11 @@ sans-serif;
 
 color: var(--color-text);
 background: var(--color-background);
+}
+
+html {
+text-rendering: optimizeLegibility;
+-webkit-font-smoothing: antialiased;
 }
 
 *,
@@ -60,6 +74,7 @@ max-width: 100%;
 
 overflow-x: hidden;
 overflow-y: auto;
+scroll-behavior: smooth;
 
 overscroll-behavior-x: none;
 overscroll-behavior-y: none;
@@ -72,7 +87,105 @@ input {
 font: inherit;
 }
 
+button {
+touch-action: manipulation;
+user-select: none;
+-webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+input:focus-visible {
+outline: 3px solid rgb(23 50 77 / 22%);
+outline-offset: 3px;
+}
+
 img {
 display: block;
 max-width: 100%;
+}
+
+:where(.state-card, .state-message, .error-card, .error-box, .empty-card, .empty-state) {
+animation: soft-content-in 260ms var(--ease-out) both;
+}
+
+:where(.state-card) {
+position: relative;
+overflow: hidden;
+}
+
+:where(.state-card)::after {
+content: '';
+
+position: absolute;
+inset: 0;
+
+pointer-events: none;
+
+background: linear-gradient(
+90deg,
+transparent,
+rgb(255 255 255 / 42%),
+transparent
+);
+
+transform: translateX(-120%);
+animation: soft-loading-sheen 1600ms var(--ease-out) infinite;
+}
+
+:where(.menu-card, .suggestion-card, .transaction-card, .customer-card, .action-button, .number-button, .amount-key, .register-button, .save-transaction-button, .refresh-button, .refresh-customers-button, .search-button, .clear-history-button) {
+transform-origin: center;
+backface-visibility: hidden;
+will-change: transform;
+}
+
+:where(.menu-card, .suggestion-card, .transaction-card, .customer-card, .action-button):hover {
+box-shadow: var(--shadow-lift);
+}
+
+:where(.menu-card, .suggestion-card, .transaction-card, .customer-card, .action-button, .number-button, .amount-key, .register-button, .save-transaction-button, .refresh-button, .refresh-customers-button):active:not(:disabled) {
+filter: saturate(1.08);
+}
+
+@keyframes soft-content-in {
+from {
+opacity: 0;
+transform: translateY(8px) scale(0.995);
+}
+
+to {
+opacity: 1;
+transform: translateY(0) scale(1);
+}
+}
+
+@keyframes soft-loading-sheen {
+0% {
+transform: translateX(-120%);
+}
+
+60%,
+100% {
+transform: translateX(120%);
+}
+}
+
+@media (hover: none) {
+:where(.menu-card, .suggestion-card, .transaction-card, .customer-card, .action-button):hover {
+box-shadow: var(--shadow-card);
+}
+}
+
+@media (prefers-reduced-motion: reduce) {
+#app {
+scroll-behavior: auto;
+}
+
+*,
+*::before,
+*::after {
+animation-duration: 1ms !important;
+animation-iteration-count: 1 !important;
+scroll-behavior: auto !important;
+transition-duration: 1ms !important;
+}
 }
