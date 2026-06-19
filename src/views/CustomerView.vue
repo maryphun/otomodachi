@@ -622,11 +622,6 @@ onMounted(loadCustomer)
           </label>
         </div>
 
-        <p class="profile-public-description">
-          公開中の場合、Googleシートの
-          「プロフィール公開」欄に「OK」が入ります。
-        </p>
-
         <p
           v-if="profilePublicSuccess"
           class="profile-public-message profile-public-message--success"

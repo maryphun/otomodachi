@@ -359,10 +359,6 @@ async function submitCustomer() {
             <strong>
               プロフィールを公開する
             </strong>
-
-            <small>
-              公開する場合、シートには「OK」と保存されます
-            </small>
           </span>
 
           <input
