@@ -1,62 +1,69 @@
 :root {
-  --color-primary: #17324d;
-  --color-primary-dark: #0f2235;
-  --color-primary-soft: #edf4fa;
+--color-primary: #17324d;
+--color-primary-dark: #0f2235;
+--color-primary-soft: #edf4fa;
 
-  --color-background: #f4f6f8;
-  --color-surface: #ffffff;
-  --color-text: #202124;
-  --color-muted: #70757d;
-  --color-border: #e2e5e9;
+--color-background: #f4f6f8;
+--color-surface: #ffffff;
+--color-text: #202124;
+--color-muted: #70757d;
+--color-border: #e2e5e9;
 
-  font-family:
-    "Noto Sans JP",
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
+font-family:
+"Noto Sans JP",
+system-ui,
+-apple-system,
+BlinkMacSystemFont,
+"Segoe UI",
+sans-serif;
 
-  color: var(--color-text);
-  background: var(--color-background);
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html,
-body,
-#app {
-  min-width: 100%;
-  min-height: 100%;
-  margin: 0;
-
-  overflow-x: hidden; 
-  overscroll-behavior-x: none;
-}
-
-body {
-  min-height: 100dvh;
-
-  overflow-x: hidden; 
-  overscroll-behavior-x: none;
-
-  background: #f4f5f7;
-}
-
-button,
-input {
-  font: inherit;
+color: var(--color-text);
+background: var(--color-background);
 }
 
 *,
 *::before,
 *::after {
-  box-sizing: border-box;
+box-sizing: border-box;
 }
 
-img,
-svg {
-  max-width: 100%;
+html,
+body {
+width: 100%;
+height: 100%;
+margin: 0;
+padding: 0;
+
+overflow: hidden;
+
+background: var(--color-background);
+}
+
+body {
+position: fixed;
+inset: 0;
+}
+
+#app {
+width: 100%;
+height: 100dvh;
+max-width: 100%;
+
+overflow-x: hidden;
+overflow-y: auto;
+
+overscroll-behavior-x: none;
+overscroll-behavior-y: none;
+
+-webkit-overflow-scrolling: touch;
+}
+
+button,
+input {
+font: inherit;
+}
+
+img {
+display: block;
+max-width: 100%;
 }

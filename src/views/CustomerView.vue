@@ -1210,41 +1210,41 @@ h1 {
 }
 
 .modal-backdrop {
-  position: fixed;
-  z-index: 1000;
-  inset: 0;
+ position: fixed;
+ z-index: 1000;
+ inset: 0;
 
-  width: 100%;
-  height: 100dvh;
+ display: flex;
+ align-items: center;
+ justify-content: center;
 
-  display: grid;
-  place-items: center;
+ width: 100%;
+ height: 100dvh;
+ padding: 16px;
 
-  padding: 16px;
+ overflow: hidden;
+ overscroll-behavior: none;
 
-  overflow: hidden;
-  overscroll-behavior: none;
-
-  background: rgb(10 24 38 / 58%);
-  backdrop-filter: blur(6px);
+ background: rgb(10 24 38 / 58%);
+ backdrop-filter: blur(6px);
 }
 
-.transaction-modal {
-  width: min(100%, 520px);
-  max-width: 100%;
-  max-height: calc(100dvh - 32px);
+ .transaction-modal {
+ width: min(100%, 520px);
+ max-width: 100%;
+ max-height: calc(100dvh - 32px);
+ padding: 22px;
 
-  overflow-x: hidden;
-  overflow-y: auto;
+ overflow-x: hidden;
+ overflow-y: auto;
 
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
+ overscroll-behavior: contain;
+ -webkit-overflow-scrolling: touch;
 
-  padding: 22px;
-
-  background: var(--color-surface);
-  border-radius: 28px;
+ background: var(--color-surface);
+ border-radius: 28px;
 }
+
 
 .modal-eyebrow {
   margin: 0 0 5px;
@@ -1686,30 +1686,26 @@ h1 {
 }
 
 .history-chart-scroll {
-  width: 100%;
-  max-width: 100%;
+    width: 100%;
+    max-width: 100%;
 
-  overflow-x: auto;
-  overflow-y: hidden;
+    overflow-x: auto;
+    overflow-y: hidden;
 
-  overscroll-behavior-x: contain;
-  overscroll-behavior-y: none;
+    overscroll-behavior-x: contain;
+    overscroll-behavior-y: none;
 
-  -webkit-overflow-scrolling: touch;
-  touch-action: pan-x;
-
-  scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
 }
 
-
 .history-chart {
-  display: block;
+    display: block;
 
-  width: 100%;
-  min-width: 520px;
-  height: auto;
-
-  overflow: visible;
+    width: 100%;
+    min-width: 520px;
+    max-width: none;
+    height: auto;
 }
 
 .chart-axis {
@@ -1810,17 +1806,17 @@ h1 {
 }
 
 @media (max-width: 560px) {
-  .modal-backdrop {
-    align-items: end;
+.modal-backdrop {
+    align-items: flex-end;
     padding: 0;
-  }
+    }
 
-  .transaction-modal {
-    width: 100%;
-    max-height: 92dvh;
+    .transaction-modal {
+        width: 100%;
+        max-height: 92dvh;
 
-    border-radius: 26px 26px 0 0;
-  }
+        border-radius: 26px 26px 0 0;
+    }
 }
 
 @media (hover: none) {
