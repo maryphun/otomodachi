@@ -8,10 +8,20 @@ const TODAY_HISTORY_CACHE_KEY =
   'otomodachi-today-history'
 const TODAY_HISTORY_CACHE_TIME_KEY =
   'otomodachi-today-history-time'
+const CUSTOMER_HISTORY_CACHE_PREFIX =
+  'otomodachi-history-'
 
-const CUSTOMER_LIST_FRESH_MS = 5 * 60 * 1000
-const CUSTOMER_LIST_STALE_MS = 24 * 60 * 60 * 1000
-const CUSTOMER_DETAIL_STALE_MS = 60 * 60 * 1000
+const MINUTE_MS = 60 * 1000
+const HOUR_MS = 60 * MINUTE_MS
+const DAY_MS = 24 * HOUR_MS
+
+const CUSTOMER_LIST_FRESH_MS = 6 * HOUR_MS
+const CUSTOMER_LIST_STALE_MS = 30 * DAY_MS
+const CUSTOMER_DETAIL_FRESH_MS = 30 * MINUTE_MS
+const CUSTOMER_DETAIL_STALE_MS = 30 * DAY_MS
+const CUSTOMER_HISTORY_FRESH_MS = 10 * MINUTE_MS
+const CUSTOMER_HISTORY_STALE_MS = 14 * DAY_MS
+const TODAY_HISTORY_FRESH_MS = 5 * MINUTE_MS
 
 let allCustomersRequest = null
 const customerRequests = new Map()
@@ -107,11 +117,10 @@ function removeStoredValue(storage, key) {
   }
 }
 
-function readCache(key, maxAgeMs = Number.POSITIVE_INFINITY) {
-  const rawValue =
-    getStoredValue(sessionStorage, key) ||
-    getStoredValue(localStorage, key)
-
+function parseCacheValue(
+  rawValue,
+  maxAgeMs = Number.POSITIVE_INFINITY,
+) {
   if (!rawValue) {
     return null
   }
@@ -146,6 +155,19 @@ function readCache(key, maxAgeMs = Number.POSITIVE_INFINITY) {
   }
 }
 
+function readCache(key, maxAgeMs = Number.POSITIVE_INFINITY) {
+  return (
+    parseCacheValue(
+      getStoredValue(sessionStorage, key),
+      maxAgeMs,
+    ) ||
+    parseCacheValue(
+      getStoredValue(localStorage, key),
+      maxAgeMs,
+    )
+  )
+}
+
 function writeCache(key, data, savedAt = Date.now()) {
   const value = JSON.stringify({
     data,
@@ -167,8 +189,24 @@ function getCustomerDetailCacheKey(customerCode) {
   )}`
 }
 
+function getCustomerHistoryCacheKey(
+  customerCode,
+  period = 'all',
+) {
+  return `${CUSTOMER_HISTORY_CACHE_PREFIX}${String(
+    customerCode,
+  )}-${String(period)}`
+}
+
 function normalizeCustomerCode(value) {
   return String(value || '').trim()
+}
+
+function normalizeSearchText(value) {
+  return String(value || '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/\s+/g, '')
 }
 
 function customerCodesMatch(left, right) {
@@ -196,11 +234,37 @@ function normalizeCustomer(customer) {
     currentBalance: Number(customer.currentBalance || 0),
     profilePublic: Boolean(customer.profilePublic),
     lastVisit: String(customer.lastVisit || ''),
+    normalizedCustomerCode: normalizeCustomerCode(
+      customer.customerCode,
+    ).replace(/^0+/, ''),
+    normalizedCustomerName: normalizeSearchText(
+      customer.customerName,
+    ),
   }
 }
 
 function writeCustomersCache(customers, savedAt = Date.now()) {
   writeCache(CUSTOMER_CACHE_KEY, customers, savedAt)
+}
+
+function writeCustomerDetailCache(customer) {
+  writeCache(
+    getCustomerDetailCacheKey(customer.customerCode),
+    customer,
+  )
+
+  if (
+    customer.normalizedCustomerCode &&
+    customer.normalizedCustomerCode !==
+      customer.customerCode
+  ) {
+    writeCache(
+      getCustomerDetailCacheKey(
+        customer.normalizedCustomerCode,
+      ),
+      customer,
+    )
+  }
 }
 
 function updateCustomerListCache(customer) {
@@ -238,7 +302,7 @@ function updateCustomerListCache(customer) {
     ),
   )
 
-  writeCustomersCache(customers, cached.savedAt)
+  writeCustomersCache(customers)
 }
 
 export function getCachedCustomers() {
@@ -272,6 +336,22 @@ export function getCachedCustomer(customerCode) {
   )
 }
 
+export function getCachedHistory(
+  customerCode,
+  period = 'all',
+) {
+  const cached = readCache(
+    getCustomerHistoryCacheKey(customerCode, period),
+    CUSTOMER_HISTORY_STALE_MS,
+  )
+
+  if (!cached || !Array.isArray(cached.data)) {
+    return []
+  }
+
+  return cached.data
+}
+
 export function cacheCustomer(customer) {
   const normalizedCustomer = normalizeCustomer(customer)
 
@@ -279,19 +359,90 @@ export function cacheCustomer(customer) {
     return
   }
 
-  writeCache(
-    getCustomerDetailCacheKey(
-      normalizedCustomer.customerCode,
-    ),
-    normalizedCustomer,
-  )
+  writeCustomerDetailCache(normalizedCustomer)
 
   updateCustomerListCache(normalizedCustomer)
+}
+
+export function clearCustomerHistoryCache(customerCode) {
+  removeCache(
+    getCustomerHistoryCacheKey(customerCode, 'all'),
+  )
 }
 
 export function clearTodayHistoryCache() {
   removeCache(TODAY_HISTORY_CACHE_KEY)
   removeCache(TODAY_HISTORY_CACHE_TIME_KEY)
+}
+
+function readTodayHistoryCache(maxAgeMs) {
+  const cached =
+    getStoredValue(
+      sessionStorage,
+      TODAY_HISTORY_CACHE_KEY,
+    ) ||
+    getStoredValue(localStorage, TODAY_HISTORY_CACHE_KEY)
+
+  const cachedTime =
+    getStoredValue(
+      sessionStorage,
+      TODAY_HISTORY_CACHE_TIME_KEY,
+    ) ||
+    getStoredValue(
+      localStorage,
+      TODAY_HISTORY_CACHE_TIME_KEY,
+    )
+
+  if (!cached || !cachedTime) {
+    return null
+  }
+
+  const savedAt = new Date(cachedTime).getTime()
+
+  if (
+    Number.isNaN(savedAt) ||
+    Date.now() - savedAt > maxAgeMs
+  ) {
+    return null
+  }
+
+  try {
+    const data = JSON.parse(cached)
+
+    if (!Array.isArray(data)) {
+      return null
+    }
+
+    return data
+  } catch (error) {
+    console.error('本日履歴キャッシュの解析に失敗しました', error)
+    return null
+  }
+}
+
+function writeTodayHistoryCache(data) {
+  const now = new Date().toISOString()
+
+  setStoredValue(
+    sessionStorage,
+    TODAY_HISTORY_CACHE_KEY,
+    JSON.stringify(data),
+  )
+  setStoredValue(
+    localStorage,
+    TODAY_HISTORY_CACHE_KEY,
+    JSON.stringify(data),
+  )
+  setStoredValue(
+    sessionStorage,
+    TODAY_HISTORY_CACHE_TIME_KEY,
+    now,
+  )
+  setStoredValue(
+    localStorage,
+    TODAY_HISTORY_CACHE_TIME_KEY,
+    now,
+  )
 }
 
 export async function getAllCustomers(
@@ -326,12 +477,7 @@ export async function getAllCustomers(
         writeCustomersCache(normalizedCustomers)
 
         for (const customer of normalizedCustomers) {
-          writeCache(
-            getCustomerDetailCacheKey(
-              customer.customerCode,
-            ),
-            customer,
-          )
+          writeCustomerDetailCache(customer)
         }
 
         return normalizedCustomers
@@ -347,6 +493,14 @@ export async function getAllCustomers(
 export function getCustomer(customerCode) {
   const normalizedCode =
     normalizeCustomerCode(customerCode)
+  const cached = readCache(
+    getCustomerDetailCacheKey(customerCode),
+    CUSTOMER_DETAIL_FRESH_MS,
+  )
+
+  if (cached?.data) {
+    return Promise.resolve(cached.data)
+  }
 
   if (!customerRequests.has(normalizedCode)) {
     const request = apiGet('getCustomer', {
@@ -376,10 +530,33 @@ export function getCustomer(customerCode) {
 export function getHistory(
   customerCode,
   period = 'all',
+  forceRefresh = false,
 ) {
+  if (!forceRefresh) {
+    const cached = readCache(
+      getCustomerHistoryCacheKey(customerCode, period),
+      CUSTOMER_HISTORY_FRESH_MS,
+    )
+
+    if (cached && Array.isArray(cached.data)) {
+      return Promise.resolve(cached.data)
+    }
+  }
+
   return apiGet('getHistory', {
     customerCode,
     period,
+  }).then((history) => {
+    const normalizedHistory = Array.isArray(history)
+      ? history
+      : []
+
+    writeCache(
+      getCustomerHistoryCacheKey(customerCode, period),
+      normalizedHistory,
+    )
+
+    return normalizedHistory
   })
 }
 
@@ -415,6 +592,24 @@ export function updateCustomerProfilePublic(
   })
 }
 
-export function getTodayHistory() {
-  return apiGet('getTodayHistory')
+export function getTodayHistory(forceRefresh = false) {
+  if (!forceRefresh) {
+    const cached = readTodayHistoryCache(
+      TODAY_HISTORY_FRESH_MS,
+    )
+
+    if (cached) {
+      return Promise.resolve(cached)
+    }
+  }
+
+  return apiGet('getTodayHistory').then((history) => {
+    const normalizedHistory = Array.isArray(history)
+      ? history
+      : []
+
+    writeTodayHistoryCache(normalizedHistory)
+
+    return normalizedHistory
+  })
 }

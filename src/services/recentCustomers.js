@@ -25,7 +25,7 @@ export function getRecentCustomers() {
     )
   } catch (error) {
     console.error(
-      '最近の顧客キャッシュを読み込めませんでした',
+      '最近のおともだちキャッシュを読み込めませんでした',
       error,
     )
 

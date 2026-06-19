@@ -28,9 +28,9 @@ const suggestedCustomers = computed(() => {
 
   return customers.value
     .filter((customer) => {
-      const customerName = normalizeText(
-        customer.customerName,
-      )
+      const customerName =
+        customer.normalizedCustomerName ||
+        normalizeText(customer.customerName)
 
       return customerName.includes(keyword)
     })
@@ -81,7 +81,8 @@ async function loadCustomers(forceRefresh = false) {
 
     if (!hasCachedCustomers) {
       errorMessage.value =
-        error.message || '顧客情報の取得に失敗しました'
+        error.message ||
+        'おともだち情報の取得に失敗しました'
     }
   } finally {
     isLoading.value = false
@@ -105,7 +106,7 @@ onMounted(loadCustomers)
 
       <div class="header-copy">
         <p class="eyebrow">NAME SEARCH</p>
-        <h1>名前で検索</h1>
+        <h1>お名前で検索</h1>
       </div>
 
       <button
@@ -128,7 +129,7 @@ onMounted(loadCustomers)
           v-model="searchText"
           type="search"
           class="search-input"
-          placeholder="名前を入力してください"
+          placeholder="お名前を入力してください"
           autocomplete="off"
           enterkeyhint="search"
         />
@@ -168,7 +169,7 @@ onMounted(loadCustomers)
         class="state-card"
       >
         <span class="loading-spinner" />
-        <p>顧客情報を読み込み中...</p>
+        <p>おともだち情報を読み込み中...</p>
       </div>
 
       <div
@@ -205,7 +206,7 @@ onMounted(loadCustomers)
 
         <p>
           「{{ searchText }}」に一致する<br />
-          お客様が見つかりません
+          おともだちが見つかりません
         </p>
       </div>
 
@@ -236,10 +237,11 @@ onMounted(loadCustomers)
           <span class="suggestion-info">
             <span class="suggestion-name">
               {{ customer.customerName }}
+              <span class="name-suffix">さん</span>
             </span>
 
             <span class="suggestion-code">
-              顧客コード
+              おともだちコード
               {{ customer.customerCode }}
             </span>
           </span>
@@ -581,6 +583,14 @@ h1 {
   font-weight: 850;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.name-suffix {
+  margin-left: 2px;
+
+  color: var(--color-muted);
+  font-size: 0.78em;
+  font-weight: 700;
 }
 
 .suggestion-code {

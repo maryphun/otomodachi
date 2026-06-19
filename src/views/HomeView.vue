@@ -1,7 +1,10 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { getAllCustomers } from '../services/api'
+import {
+  getAllCustomers,
+  getTodayHistory,
+} from '../services/api'
 import homeBackground from '../assets/home-background.jpg'
 
 import {
@@ -43,7 +46,7 @@ const todayText = `${datePart}(${weekdayPart})`
 const menuItems = [
   {
     title: 'コードで検索',
-    description: '顧客コードから検索',
+    description: 'おともだちコードから検索',
     route: '/code-search',
     symbol: '#',
   },
@@ -61,13 +64,13 @@ const menuItems = [
   },
   {
     title: '常連さん',
-    description: '最近来店した顧客',
+    description: '最近来店したおともだち',
     route: '/recent-customers',
     symbol: '常',
   },
   {
     title: '本日の増減履歴',
-    description: '今日のチップ増減を確認',
+    description: '今日のうにょ増減を確認',
     route: '/today-history',
     symbol: '履',
     wide: true,
@@ -78,9 +81,43 @@ function openPage(route) {
   router.push(route)
 }
 
-function warmCustomerList() {
-  getAllCustomers().catch((error) => {
-    console.error(error)
+function prefetchPage(route) {
+  if (
+    route === '/code-search' ||
+    route === '/search/name'
+  ) {
+    getAllCustomers().catch((error) => {
+      console.error(error)
+    })
+  }
+
+  if (route === '/today-history') {
+    getTodayHistory().catch((error) => {
+      console.error(error)
+    })
+  }
+}
+
+function runWhenIdle(callback) {
+  if ('requestIdleCallback' in window) {
+    window.requestIdleCallback(callback, {
+      timeout: 1500,
+    })
+    return
+  }
+
+  window.setTimeout(callback, 200)
+}
+
+function warmAppData() {
+  runWhenIdle(() => {
+    getAllCustomers().catch((error) => {
+      console.error(error)
+    })
+
+    getTodayHistory().catch((error) => {
+      console.error(error)
+    })
   })
 }
 
@@ -96,7 +133,7 @@ async function refreshCustomerList() {
     const customers = await getAllCustomers(true)
 
     refreshMessage.value =
-      `${customers.length}名の顧客情報を更新しました`
+      `${customers.length}名のおともだち情報を更新しました`
 
     window.setTimeout(() => {
       refreshMessage.value = ''
@@ -106,13 +143,13 @@ async function refreshCustomerList() {
 
     refreshMessage.value =
       error.message ||
-      '顧客情報の更新に失敗しました'
+      'おともだち情報の更新に失敗しました'
   } finally {
     isRefreshingCustomers.value = false
   }
 }
 
-onMounted(warmCustomerList)
+onMounted(warmAppData)
 </script>
 
 <template>
@@ -146,8 +183,8 @@ onMounted(warmCustomerList)
     <span>
       {{
         isRefreshingCustomers
-          ? '顧客情報を更新中…'
-          : '顧客情報を再読み込み'
+          ? 'おともだち情報を更新中…'
+          : 'おともだち情報を再読み込み'
       }}
     </span>
   </button>
@@ -169,6 +206,9 @@ onMounted(warmCustomerList)
           type="button"
           class="menu-card"
           :class="{ 'menu-card--wide': item.wide }"
+          @focus="prefetchPage(item.route)"
+          @pointerenter="prefetchPage(item.route)"
+          @touchstart.passive="prefetchPage(item.route)"
           @click="openPage(item.route)"
         >
           <span class="menu-symbol">

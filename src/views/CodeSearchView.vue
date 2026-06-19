@@ -28,7 +28,9 @@ const suggestedCustomers = computed(() => {
     .filter((customer) => {
       const customerCode = String(customer.customerCode)
       const normalizedCode =
-        customerCode.replace(/^0+/, '') || '0'
+        customer.normalizedCustomerCode ||
+        customerCode.replace(/^0+/, '') ||
+        '0'
 
       return (
         customerCode.startsWith(input) ||
@@ -127,7 +129,7 @@ onMounted(loadCustomers)
             type="text"
             inputmode="none"
             readonly
-            aria-label="入力された顧客コード"
+            aria-label="入力されたおともだちコード"
           />
         </div>
 
@@ -173,7 +175,7 @@ onMounted(loadCustomers)
         <div class="suggestions-header">
           <div>
             <h2>候補</h2>
-            <p>入力中のコードに一致する顧客</p>
+            <p>入力中のコードに一致するおともだち</p>
           </div>
 
           <span
@@ -188,7 +190,7 @@ onMounted(loadCustomers)
           v-if="isLoading"
           class="state-message"
         >
-          顧客情報を読み込み中...
+          おともだち情報を読み込み中...
         </p>
 
         <div
@@ -218,7 +220,7 @@ onMounted(loadCustomers)
           class="empty-state"
         >
           <span class="empty-icon">?</span>
-          <p>一致する顧客が見つかりません</p>
+          <p>一致するおともだちが見つかりません</p>
         </div>
 
        <TransitionGroup
@@ -241,7 +243,10 @@ onMounted(loadCustomers)
             </span>
 
             <span class="suggestion-info">
-              <strong>{{ customer.customerName }}</strong>
+              <strong class="friend-name">
+                {{ customer.customerName }}
+                <span class="name-suffix">さん</span>
+              </strong>
 
               <small>
                 {{
@@ -261,7 +266,7 @@ onMounted(loadCustomers)
                 }}
               </strong>
 
-              <small>チップ</small>
+              <small>うにょ</small>
             </span>
 
             <span class="suggestion-arrow">→</span>
@@ -557,10 +562,18 @@ h1 {
   display: block;
 }
 
-.suggestion-info strong {
+.friend-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.name-suffix {
+  margin-left: 2px;
+
+  color: var(--color-muted);
+  font-size: 0.78em;
+  font-weight: 700;
 }
 
 .suggestion-info small {

@@ -19,6 +19,8 @@ const CACHE_KEY =
 const CACHE_TIME_KEY =
   'otomodachi-today-history-time'
 
+const HISTORY_FRESH_MS = 5 * 60 * 1000
+
 const transactions = ref([])
 const isLoading = ref(true)
 const isRefreshing = ref(false)
@@ -127,6 +129,28 @@ function formatLastUpdated(value) {
   }).format(date)
 }
 
+function getTokyoDateKey(value) {
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return ''
+  }
+
+  return new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date)
+}
+
+function isTodayInTokyo(value) {
+  return (
+    getTokyoDateKey(value) ===
+    getTokyoDateKey(new Date())
+  )
+}
+
 function getCachedValue(key) {
   return (
     sessionStorage.getItem(key) ||
@@ -151,6 +175,13 @@ function loadCachedHistory() {
       return false
     }
 
+    if (
+      cachedTime &&
+      !isTodayInTokyo(cachedTime)
+    ) {
+      return false
+    }
+
     const parsed = JSON.parse(cached)
 
     if (!Array.isArray(parsed)) {
@@ -159,6 +190,7 @@ function loadCachedHistory() {
 
     transactions.value = parsed
     lastUpdated.value = cachedTime || ''
+    isLoading.value = false
 
     return true
   } catch (error) {
@@ -189,6 +221,7 @@ function saveHistoryCache(data) {
 
 async function loadHistory(
   showMainLoading = true,
+  forceRefresh = false,
 ) {
   if (showMainLoading) {
     isLoading.value = true
@@ -199,7 +232,9 @@ async function loadHistory(
   errorMessage.value = ''
 
   try {
-    const result = await getTodayHistory()
+    const result = await getTodayHistory(
+      forceRefresh,
+    )
 
     transactions.value = Array.isArray(result)
       ? result
@@ -224,18 +259,40 @@ async function loadHistory(
   }
 }
 
+function isCachedHistoryFresh() {
+  if (!lastUpdated.value) {
+    return false
+  }
+
+  const date = new Date(lastUpdated.value)
+
+  if (Number.isNaN(date.getTime())) {
+    return false
+  }
+
+  return (
+    isTodayInTokyo(lastUpdated.value) &&
+    Date.now() - date.getTime() < HISTORY_FRESH_MS
+  )
+}
+
 function refreshHistory() {
-  loadHistory(false)
+  loadHistory(false, true)
 }
 
 onMounted(() => {
   const hasCache = loadCachedHistory()
 
-  /*
-   * キャッシュがあれば即表示し、
-   * 裏側で最新データを取得します。
-   */
-  loadHistory(!hasCache)
+  if (!hasCache) {
+    loadHistory(true, true)
+    return
+  }
+
+  isLoading.value = false
+
+  if (!isCachedHistoryFresh()) {
+    loadHistory(false, true)
+  }
 })
 </script>
 
@@ -377,7 +434,7 @@ onMounted(() => {
 
         <button
           type="button"
-          @click="loadHistory(true)"
+          @click="loadHistory(true, true)"
         >
           再読み込み
         </button>
@@ -441,12 +498,13 @@ onMounted(() => {
           <span class="transaction-info">
             <strong class="customer-name">
               {{ transaction.customerName }}
+              <span class="name-suffix">さん</span>
             </strong>
 
             <span class="transaction-meta">
               {{ formatTime(transaction.timestamp) }}
               ・
-              顧客コード
+              おともだちコード
               {{ transaction.customerCode }}
             </span>
           </span>
@@ -826,6 +884,14 @@ h1 {
   font-weight: 850;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.name-suffix {
+  margin-left: 2px;
+
+  color: var(--color-muted);
+  font-size: 0.78em;
+  font-weight: 700;
 }
 
 .transaction-meta {

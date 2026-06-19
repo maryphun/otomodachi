@@ -128,7 +128,7 @@ async function submitCustomer() {
 
   const confirmed = window.confirm(
     [
-      `お名前：${normalizedName.value}`,
+      `お名前：${normalizedName.value}さん`,
       `初期うにょ：${formatNumber(initialBalance.value)}`,
       `プロフィール公開：${profilePublic.value ? 'する' : 'しない'}`,
       '',
@@ -167,13 +167,13 @@ async function submitCustomer() {
     }
 
     /*
-     * 最近アクセスした顧客にも記録します。
+     * 最近アクセスしたおともだちにも記録します。
      */
     recordRecentCustomer(newCustomer)
     cacheCustomer(newCustomer)
 
     /*
-     * 登録した顧客の詳細ページへ移動します。
+     * 登録したおともだちの詳細ページへ移動します。
      */
     router.replace(
       `/customer/${newCustomer.customerCode}`,
@@ -183,7 +183,7 @@ async function submitCustomer() {
 
     errorMessage.value =
       error.message ||
-      '顧客登録に失敗しました'
+      'おともだち登録に失敗しました'
   } finally {
     isSaving.value = false
   }
@@ -345,7 +345,7 @@ async function submitCustomer() {
             <h2>プロフィール公開</h2>
 
             <p>
-              お客様向けページで情報を公開するか設定します
+              おともだち向けページで情報を公開するか設定します
             </p>
           </div>
         </div>
@@ -387,10 +387,14 @@ async function submitCustomer() {
           <span>お名前</span>
 
           <strong>
-            {{
-              normalizedName ||
-              '未入力'
-            }}
+            <template v-if="normalizedName">
+              {{ normalizedName }}
+              <span class="name-suffix">さん</span>
+            </template>
+
+            <template v-else>
+              未入力
+            </template>
           </strong>
         </div>
 
@@ -416,7 +420,7 @@ async function submitCustomer() {
         </div>
 
         <div class="preview-row">
-          <span>顧客コード</span>
+          <span>おともだちコード</span>
 
           <strong class="automatic-value">
             自動発行
@@ -928,6 +932,14 @@ h1 {
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.preview-row .name-suffix {
+  margin-left: 2px;
+
+  color: var(--color-muted);
+  font-size: 0.82em;
+  font-weight: 700;
 }
 
 .automatic-value {

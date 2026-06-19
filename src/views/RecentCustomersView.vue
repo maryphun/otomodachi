@@ -54,7 +54,7 @@ function formatAccessTime(value) {
 
 function clearHistory() {
   const confirmed = window.confirm(
-    '最近アクセスした顧客の記録を削除しますか？',
+    '最近アクセスしたおともだちの記録を削除しますか？',
   )
 
   if (!confirmed) {
@@ -96,10 +96,10 @@ onMounted(loadRecentCustomers)
 
     <section class="page-intro">
       <div>
-        <strong>最近アクセスした顧客</strong>
+        <strong>最近アクセスしたおともだち</strong>
 
         <p>
-          顧客情報を開いた順に最大20名表示します
+          おともだち情報を開いた順に最大20名表示します
         </p>
       </div>
 
@@ -117,7 +117,7 @@ onMounted(loadRecentCustomers)
       <h2>まだ記録がありません</h2>
 
       <p>
-        コード検索または名前検索から顧客情報を開くと、
+        コード検索または名前検索からおともだち情報を開くと、
         ここに表示されます。
       </p>
 
@@ -126,7 +126,7 @@ onMounted(loadRecentCustomers)
         class="search-button"
         @click="router.push('/code-search')"
       >
-        顧客を検索
+        おともだちを検索
       </button>
     </section>
 
@@ -154,10 +154,11 @@ onMounted(loadRecentCustomers)
           <span class="customer-info">
             <strong class="customer-name">
               {{ customer.customerName }}
+              <span class="name-suffix">さん</span>
             </strong>
 
             <span class="customer-meta">
-              顧客コード
+              おともだちコード
               {{ customer.customerCode }}
             </span>
 
@@ -408,6 +409,14 @@ h1 {
   font-weight: 850;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.name-suffix {
+  margin-left: 2px;
+
+  color: var(--color-muted);
+  font-size: 0.78em;
+  font-weight: 700;
 }
 
 .customer-meta {

@@ -11,8 +11,10 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   addTransaction,
   cacheCustomer,
+  clearCustomerHistoryCache,
   clearTodayHistoryCache,
   getCachedCustomer,
+  getCachedHistory,
   getCustomer,
   getHistory,
   updateCustomerProfilePublic,
@@ -291,7 +293,8 @@ async function loadCustomer() {
 
     if (!cachedCustomer) {
       errorMessage.value =
-        error.message || '顧客情報の取得に失敗しました'
+        error.message ||
+        'おともだち情報の取得に失敗しました'
     }
   } finally {
     isLoading.value = false
@@ -311,8 +314,8 @@ async function saveProfilePublic(event) {
 
   const confirmed = window.confirm(
     nextValue
-      ? 'このお客様のプロフィールを公開しますか？'
-      : 'このお客様のプロフィールを非公開にしますか？',
+      ? 'このおともだちのプロフィールを公開しますか？'
+      : 'このおともだちのプロフィールを非公開にしますか？',
   )
 
   if (!confirmed) {
@@ -378,7 +381,18 @@ async function showHistory() {
     return
   }
 
-  isHistoryLoading.value = true
+  const cachedHistory = getCachedHistory(
+    customerCode.value,
+    'all',
+  )
+  const hasCachedHistory = cachedHistory.length > 0
+
+  if (hasCachedHistory) {
+    history.value = cachedHistory
+    await scrollChartToNewest()
+  }
+
+  isHistoryLoading.value = !hasCachedHistory
 
   try {
     history.value = await getHistory(
@@ -390,9 +404,11 @@ async function showHistory() {
   } catch (error) {
     console.error(error)
 
-    transactionError.value =
-      error.message ||
-      '履歴の取得に失敗しました'
+    if (!hasCachedHistory) {
+      transactionError.value =
+        error.message ||
+        '履歴の取得に失敗しました'
+    }
   } finally {
     isHistoryLoading.value = false
 
@@ -433,7 +449,7 @@ async function saveTransaction() {
 
   const confirmed = window.confirm(
     [
-      `顧客：${customer.value.customerCode} ${customer.value.customerName}`,
+      `おともだち：${customer.value.customerCode} ${customer.value.customerName}さん`,
       `操作：${actionName}`,
       `増減：${formatSignedNumber(change)}`,
       `現在：${formatNumber(oldBalance)}`,
@@ -487,6 +503,7 @@ async function saveTransaction() {
      */
     history.value = []
     
+    clearCustomerHistoryCache(customerCode.value)
     clearTodayHistoryCache()
 
     transactionSuccess.value = '保存しました'
@@ -533,7 +550,7 @@ onMounted(loadCustomer)
 
       <div class="header-copy">
         <p class="eyebrow">CUSTOMER</p>
-        <h1>顧客情報</h1>
+        <h1>おともだち情報</h1>
       </div>
 
       <button
@@ -549,7 +566,7 @@ onMounted(loadCustomer)
       v-if="isLoading"
       class="state-card"
     >
-      顧客情報を読み込み中...
+      おともだち情報を読み込み中...
     </section>
 
     <section
@@ -573,7 +590,10 @@ onMounted(loadCustomer)
             {{ customer.customerCode }}
           </span>
 
-          <h2>{{ customer.customerName }}</h2>
+          <h2>
+            {{ customer.customerName }}
+            <span class="name-suffix">さん</span>
+          </h2>
 
           <p>
             {{
@@ -1205,6 +1225,14 @@ h1 {
 
   font-size: clamp(28px, 7vw, 42px);
   line-height: 1.25;
+}
+
+.name-suffix {
+  margin-left: 3px;
+
+  color: var(--color-muted);
+  font-size: 0.52em;
+  font-weight: 700;
 }
 
 .customer-identity p {
