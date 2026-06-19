@@ -15,6 +15,118 @@ const searchText = ref('')
 const isLoading = ref(true)
 const errorMessage = ref('')
 
+const ROMAJI_TO_HIRAGANA = {
+  a: 'あ',
+  i: 'い',
+  u: 'う',
+  e: 'え',
+  o: 'お',
+  ka: 'か',
+  ki: 'き',
+  ku: 'く',
+  ke: 'け',
+  ko: 'こ',
+  kya: 'きゃ',
+  kyu: 'きゅ',
+  kyo: 'きょ',
+  ga: 'が',
+  gi: 'ぎ',
+  gu: 'ぐ',
+  ge: 'げ',
+  go: 'ご',
+  gya: 'ぎゃ',
+  gyu: 'ぎゅ',
+  gyo: 'ぎょ',
+  sa: 'さ',
+  si: 'し',
+  shi: 'し',
+  su: 'す',
+  se: 'せ',
+  so: 'そ',
+  sha: 'しゃ',
+  shu: 'しゅ',
+  sho: 'しょ',
+  za: 'ざ',
+  zi: 'じ',
+  ji: 'じ',
+  zu: 'ず',
+  ze: 'ぜ',
+  zo: 'ぞ',
+  ja: 'じゃ',
+  ju: 'じゅ',
+  jo: 'じょ',
+  ta: 'た',
+  ti: 'ち',
+  chi: 'ち',
+  tu: 'つ',
+  tsu: 'つ',
+  te: 'て',
+  to: 'と',
+  cha: 'ちゃ',
+  chu: 'ちゅ',
+  cho: 'ちょ',
+  da: 'だ',
+  di: 'ぢ',
+  du: 'づ',
+  de: 'で',
+  do: 'ど',
+  na: 'な',
+  ni: 'に',
+  nu: 'ぬ',
+  ne: 'ね',
+  no: 'の',
+  nya: 'にゃ',
+  nyu: 'にゅ',
+  nyo: 'にょ',
+  ha: 'は',
+  hi: 'ひ',
+  hu: 'ふ',
+  fu: 'ふ',
+  he: 'へ',
+  ho: 'ほ',
+  hya: 'ひゃ',
+  hyu: 'ひゅ',
+  hyo: 'ひょ',
+  ba: 'ば',
+  bi: 'び',
+  bu: 'ぶ',
+  be: 'べ',
+  bo: 'ぼ',
+  bya: 'びゃ',
+  byu: 'びゅ',
+  byo: 'びょ',
+  pa: 'ぱ',
+  pi: 'ぴ',
+  pu: 'ぷ',
+  pe: 'ぺ',
+  po: 'ぽ',
+  pya: 'ぴゃ',
+  pyu: 'ぴゅ',
+  pyo: 'ぴょ',
+  ma: 'ま',
+  mi: 'み',
+  mu: 'む',
+  me: 'め',
+  mo: 'も',
+  mya: 'みゃ',
+  myu: 'みゅ',
+  myo: 'みょ',
+  ya: 'や',
+  yu: 'ゆ',
+  yo: 'よ',
+  ra: 'ら',
+  ri: 'り',
+  ru: 'る',
+  re: 'れ',
+  ro: 'ろ',
+  rya: 'りゃ',
+  ryu: 'りゅ',
+  ryo: 'りょ',
+  wa: 'わ',
+  wo: 'を',
+  n: 'ん',
+}
+
 const normalizedSearchText = computed(() => {
   return normalizeText(searchText.value)
 })
@@ -28,9 +140,10 @@ const suggestedCustomers = computed(() => {
 
   return customers.value
     .filter((customer) => {
-      const customerName =
+      const customerName = normalizeText(
         customer.normalizedCustomerName ||
-        normalizeText(customer.customerName)
+          customer.customerName,
+      )
 
       return customerName.includes(keyword)
     })
@@ -38,10 +151,74 @@ const suggestedCustomers = computed(() => {
 })
 
 function normalizeText(value) {
-  return String(value || '')
+  const normalized = String(value || '')
     .normalize('NFKC')
     .toLowerCase()
     .replace(/\s+/g, '')
+
+  return romajiToHiragana(
+    katakanaToHiragana(normalized),
+  )
+}
+
+function katakanaToHiragana(value) {
+  return value.replace(
+    /[\u30a1-\u30f6]/g,
+    (character) =>
+      String.fromCharCode(
+        character.charCodeAt(0) - 0x60,
+      ),
+  )
+}
+
+function romajiToHiragana(value) {
+  let result = ''
+  let index = 0
+
+  while (index < value.length) {
+    const character = value[index]
+    const nextCharacter = value[index + 1]
+
+    if (
+      /^[bcdfghjklmpqrstvwxyz]$/.test(character) &&
+      character === nextCharacter &&
+      character !== 'n'
+    ) {
+      result += 'っ'
+      index += 1
+      continue
+    }
+
+    if (character === 'n') {
+      const afterN = nextCharacter || ''
+
+      if (!afterN || !/^[aiueoyn]$/.test(afterN)) {
+        result += 'ん'
+        index += 1
+        continue
+      }
+    }
+
+    const romaji =
+      value.slice(index, index + 3) in
+      ROMAJI_TO_HIRAGANA
+        ? value.slice(index, index + 3)
+        : value.slice(index, index + 2) in
+            ROMAJI_TO_HIRAGANA
+          ? value.slice(index, index + 2)
+          : value.slice(index, index + 1)
+
+    if (romaji in ROMAJI_TO_HIRAGANA) {
+      result += ROMAJI_TO_HIRAGANA[romaji]
+      index += romaji.length
+      continue
+    }
+
+    result += character
+    index += 1
+  }
+
+  return result
 }
 
 function clearSearch() {

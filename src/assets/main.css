@@ -1,3 +1,11 @@
+@font-face {
+font-family: "Kiwi Maru";
+src: url("./fonts/MPLUSRounded1c-Regular") format("truetype");
+font-weight: 400;
+font-style: normal;
+font-display: swap;
+}
+
 :root {
 --color-primary: #17324d;
 --color-primary-dark: #0f2235;
@@ -10,6 +18,7 @@
 --color-border: #e2e5e9;
 
 font-family:
+"Kiwi Maru",
 "Noto Sans JP",
 system-ui,
 -apple-system,
