@@ -1,6 +1,13 @@
-```vue
+vue
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+
+import {
+  computed,
+  nextTick,
+  onMounted,
+  ref,
+} from 'vue'
+
 import { useRoute, useRouter } from 'vue-router'
 import {
   addTransaction,
@@ -11,6 +18,9 @@ import {
 import {
   recordRecentCustomer,
 } from '../services/recentCustomers'
+
+
+const historyChartScroll = ref(null)
 
 const route = useRoute()
 const router = useRouter()
@@ -68,6 +78,127 @@ const expectedBalance = computed(() => {
     transactionChange.value
   )
 })
+
+const chartWidth = 640
+const chartHeight = 230
+const chartPaddingX = 34
+const chartPaddingY = 24
+
+const chartTransactions = computed(() => {
+  return [...history.value]
+    .filter((transaction) => {
+      return Number.isFinite(
+        Number(transaction.balanceAfter),
+      )
+    })
+    .reverse()
+})
+
+const chartMinimumBalance = computed(() => {
+  if (chartTransactions.value.length === 0) {
+    return 0
+  }
+
+  return Math.min(
+    0,
+    ...chartTransactions.value.map((transaction) =>
+      Number(transaction.balanceAfter || 0),
+    ),
+  )
+})
+
+const chartMaximumBalance = computed(() => {
+  if (chartTransactions.value.length === 0) {
+    return 1
+  }
+
+  const maximum = Math.max(
+    ...chartTransactions.value.map((transaction) =>
+      Number(transaction.balanceAfter || 0),
+    ),
+  )
+
+  return maximum === chartMinimumBalance.value
+    ? maximum + 1
+    : maximum
+})
+
+const chartPoints = computed(() => {
+  const transactions = chartTransactions.value
+
+  if (transactions.length === 0) {
+    return []
+  }
+
+  const usableWidth =
+    chartWidth - chartPaddingX * 2
+
+  const usableHeight =
+    chartHeight - chartPaddingY * 2
+
+  const balanceRange =
+    chartMaximumBalance.value -
+    chartMinimumBalance.value
+
+  return transactions.map((transaction, index) => {
+    const x =
+      transactions.length === 1
+        ? chartWidth / 2
+        : chartPaddingX +
+          (index / (transactions.length - 1)) *
+            usableWidth
+
+    const balance = Number(
+      transaction.balanceAfter || 0,
+    )
+
+    const y =
+      chartHeight -
+      chartPaddingY -
+      ((balance - chartMinimumBalance.value) /
+        balanceRange) *
+        usableHeight
+
+    return {
+      x,
+      y,
+      balance,
+      timestamp: transaction.timestamp,
+      transactionId: transaction.transactionId,
+    }
+  })
+})
+
+const chartPolylinePoints = computed(() => {
+  return chartPoints.value
+    .map((point) => `${point.x},${point.y}`)
+    .join(' ')
+})
+
+function formatChartTime(timestamp) {
+  const value = String(timestamp || '')
+  const parts = value.split(' ')
+
+  if (parts.length < 2) {
+    return value
+  }
+
+  return parts[1].slice(0, 5)
+}
+
+async function scrollChartToNewest() {
+  await nextTick()
+
+  const chartElement = historyChartScroll.value
+
+  if (!chartElement) {
+    return
+  }
+
+  chartElement.scrollLeft =
+    chartElement.scrollWidth -
+    chartElement.clientWidth
+}
 
 function addAmountDigit(digit) {
   if (amountText.value.length >= 10) {
@@ -153,6 +284,7 @@ async function showHistory() {
   transactionSuccess.value = ''
 
   if (history.value.length > 0) {
+    await scrollChartToNewest()
     return
   }
 
@@ -163,15 +295,21 @@ async function showHistory() {
       customerCode.value,
       'all',
     )
+
+    await scrollChartToNewest()
   } catch (error) {
     console.error(error)
 
     transactionError.value =
-      error.message || '履歴の取得に失敗しました'
+      error.message ||
+      '履歴の取得に失敗しました'
   } finally {
     isHistoryLoading.value = false
+
+    await scrollChartToNewest()
   }
 }
+
 
 async function saveTransaction() {
   transactionError.value = ''
@@ -606,71 +744,211 @@ onMounted(loadCustomer)
                 </button>
               </div>
 
-              <div v-else>
-                <p
-                  v-if="isHistoryLoading"
-                  class="state-message"
-                >
-                  履歴を読み込み中...
-                </p>
+<div v-else>
+  <p
+    v-if="isHistoryLoading"
+    class="state-message"
+  >
+    履歴を読み込み中...
+  </p>
 
-                <p
-                  v-else-if="transactionError"
-                  class="transaction-message transaction-message--error"
-                >
-                  {{ transactionError }}
-                </p>
+  <p
+    v-else-if="transactionError"
+    class="transaction-message transaction-message--error"
+  >
+    {{ transactionError }}
+  </p>
 
-                <p
-                  v-else-if="history.length === 0"
-                  class="state-message"
-                >
-                  履歴はありません
-                </p>
+  <p
+    v-else-if="history.length === 0"
+    class="state-message"
+  >
+    履歴はありません
+  </p>
 
-                <div
-                  v-else
-                  class="history-list"
-                >
-                  <div
-                    v-for="transaction in history"
-                    :key="transaction.transactionId"
-                    class="history-item"
-                  >
-                    <div class="history-date">
-                      {{ transaction.timestamp }}
-                    </div>
+  <template v-else>
+    <section class="history-chart-card">
+      <div class="history-chart-header">
+        <div>
+          <span>残高推移</span>
 
-                    <div
-                      class="history-change"
-                      :class="{
-                        'history-change--positive':
-                          transaction.chipChange > 0,
-                        'history-change--negative':
-                          transaction.chipChange < 0,
-                      }"
-                    >
-                      {{
-                        formatSignedNumber(
-                          transaction.chipChange,
-                        )
-                      }}
-                    </div>
+          <strong>
+            {{
+              formatNumber(
+                customer.currentBalance,
+              )
+            }}
+          </strong>
+        </div>
+      </div>
 
-                    <div class="history-balance">
-                      <span>変更後</span>
+    <div ref="historyChartScroll" class="history-chart-scroll">
+        <svg
+          class="history-chart"
+          :viewBox="`0 0 ${chartWidth} ${chartHeight}`"
+          role="img"
+          aria-label="うにょ残高の推移グラフ"
+        >
+          <line
+            :x1="chartPaddingX"
+            :y1="chartPaddingY"
+            :x2="chartPaddingX"
+            :y2="chartHeight - chartPaddingY"
+            class="chart-axis"
+          />
 
-                      <strong>
-                        {{
-                          formatNumber(
-                            transaction.balanceAfter,
-                          )
-                        }}
-                      </strong>
-                    </div>
-                  </div>
-                </div>
-              </div>
+          <line
+            :x1="chartPaddingX"
+            :y1="chartHeight - chartPaddingY"
+            :x2="chartWidth - chartPaddingX"
+            :y2="chartHeight - chartPaddingY"
+            class="chart-axis"
+          />
+
+          <line
+            :x1="chartPaddingX"
+            :y1="chartPaddingY"
+            :x2="chartWidth - chartPaddingX"
+            :y2="chartPaddingY"
+            class="chart-grid-line"
+          />
+
+          <line
+            :x1="chartPaddingX"
+            :y1="chartHeight / 2"
+            :x2="chartWidth - chartPaddingX"
+            :y2="chartHeight / 2"
+            class="chart-grid-line"
+          />
+
+          <polyline
+            v-if="chartPoints.length > 1"
+            :points="chartPolylinePoints"
+            class="chart-line"
+          />
+
+          <g
+            v-for="point in chartPoints"
+            :key="point.transactionId"
+            class="chart-point-group"
+          >
+            <circle
+              :cx="point.x"
+              :cy="point.y"
+              r="6"
+              class="chart-point"
+            />
+
+            <title>
+              {{
+                `${point.timestamp}・${formatNumber(
+                  point.balance,
+                )}うにょ`
+              }}
+            </title>
+          </g>
+
+          <text
+            :x="chartPaddingX"
+            :y="16"
+            class="chart-label"
+          >
+            {{ formatNumber(chartMaximumBalance) }}
+          </text>
+
+          <text
+            :x="chartPaddingX"
+            :y="chartHeight - 5"
+            class="chart-label"
+          >
+            {{ formatNumber(chartMinimumBalance) }}
+          </text>
+
+          <text
+            v-if="chartPoints.length"
+            :x="chartPoints[0].x"
+            :y="chartHeight - 5"
+            text-anchor="middle"
+            class="chart-time-label"
+          >
+            {{
+              formatChartTime(
+                chartPoints[0].timestamp,
+              )
+            }}
+          </text>
+
+          <text
+            v-if="chartPoints.length > 1"
+            :x="
+              chartPoints[
+                chartPoints.length - 1
+              ].x
+            "
+            :y="chartHeight - 5"
+            text-anchor="middle"
+            class="chart-time-label"
+          >
+            {{
+              formatChartTime(
+                chartPoints[
+                  chartPoints.length - 1
+                ].timestamp,
+              )
+            }}
+          </text>
+        </svg>
+      </div>
+    </section>
+
+    <div class="history-list-heading">
+      <strong>取引履歴</strong>
+
+      <span>{{ history.length }}件</span>
+    </div>
+
+    <div class="history-list">
+      <div
+        v-for="transaction in history"
+        :key="transaction.transactionId"
+        class="history-item"
+      >
+        <div class="history-date">
+          {{ transaction.timestamp }}
+        </div>
+
+        <div
+          class="history-change"
+          :class="{
+            'history-change--positive':
+              transaction.chipChange > 0,
+            'history-change--negative':
+              transaction.chipChange < 0,
+          }"
+        >
+          {{
+            formatSignedNumber(
+              transaction.chipChange,
+            )
+          }}
+        </div>
+
+        <div class="history-balance">
+          <span>変更後</span>
+
+          <strong>
+            {{
+              formatNumber(
+                transaction.balanceAfter,
+              )
+            }}
+          </strong>
+        </div>
+      </div>
+    </div>
+  </template>
+</div>
+
             </section>
           </div>
         </Transition>
@@ -1346,6 +1624,138 @@ h1 {
 .modal-leave-to .transaction-modal {
   opacity: 0;
   transform: translateY(18px) scale(0.96);
+}
+
+.history-chart-card {
+  margin-bottom: 20px;
+  padding: 16px;
+
+  background: linear-gradient(
+    180deg,
+    #f8fbfd,
+    #ffffff
+  );
+
+  border: 1px solid var(--color-border);
+  border-radius: 20px;
+}
+
+.history-chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+
+  margin-bottom: 12px;
+}
+
+.history-chart-header span,
+.history-chart-header strong {
+  display: block;
+}
+
+.history-chart-header span {
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.history-chart-header strong {
+  margin-top: 3px;
+
+  color: var(--color-primary);
+  font-size: 24px;
+}
+
+.history-chart-header small {
+  padding: 6px 10px;
+
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  border-radius: 999px;
+
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.history-chart-scroll {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.history-chart {
+  display: block;
+
+  width: 100%;
+  min-width: 520px;
+  height: auto;
+
+  overflow: visible;
+}
+
+.chart-axis {
+  stroke: rgb(23 50 77 / 26%);
+  stroke-width: 1.5;
+}
+
+.chart-grid-line {
+  stroke: rgb(23 50 77 / 9%);
+  stroke-width: 1;
+  stroke-dasharray: 5 6;
+}
+
+.chart-line {
+  fill: none;
+  stroke: var(--color-primary);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chart-point {
+  fill: white;
+  stroke: var(--color-primary);
+  stroke-width: 4;
+
+  transition:
+    r 150ms var(--ease-out),
+    fill 150ms ease;
+}
+
+.chart-point-group:hover .chart-point {
+  r: 9;
+  fill: var(--color-primary-soft);
+}
+
+.chart-label {
+  fill: var(--color-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.chart-time-label {
+  fill: var(--color-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.history-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  margin: 0 2px 10px;
+}
+
+.history-list-heading strong {
+  font-size: 15px;
+}
+
+.history-list-heading span {
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 750;
 }
 
 @media (min-width: 700px) {
