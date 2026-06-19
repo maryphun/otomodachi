@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { getAllCustomers } from '../services/api'
 import homeBackground from '../assets/home-background.jpg'
@@ -78,6 +78,12 @@ function openPage(route) {
   router.push(route)
 }
 
+function warmCustomerList() {
+  getAllCustomers().catch((error) => {
+    console.error(error)
+  })
+}
+
 async function refreshCustomerList() {
   if (isRefreshingCustomers.value) {
     return
@@ -87,10 +93,6 @@ async function refreshCustomerList() {
   refreshMessage.value = ''
 
   try {
-    sessionStorage.removeItem(
-      'otomodachi-customers',
-    )
-
     const customers = await getAllCustomers(true)
 
     refreshMessage.value =
@@ -109,6 +111,8 @@ async function refreshCustomerList() {
     isRefreshingCustomers.value = false
   }
 }
+
+onMounted(warmCustomerList)
 </script>
 
 <template>

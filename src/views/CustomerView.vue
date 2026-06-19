@@ -10,6 +10,9 @@ import {
 import { useRoute, useRouter } from 'vue-router'
 import {
   addTransaction,
+  cacheCustomer,
+  clearTodayHistoryCache,
+  getCachedCustomer,
   getCustomer,
   getHistory,
   updateCustomerProfilePublic,
@@ -265,17 +268,31 @@ function formatSignedNumber(value) {
 }
 
 async function loadCustomer() {
-  isLoading.value = true
+  const cachedCustomer = getCachedCustomer(
+    customerCode.value,
+  )
+
+  if (cachedCustomer) {
+    customer.value = cachedCustomer
+    recordRecentCustomer(cachedCustomer)
+  }
+
+  isLoading.value = !cachedCustomer
   errorMessage.value = ''
 
   try {
-    customer.value = await getCustomer(customerCode.value, )
+    customer.value = await getCustomer(
+      customerCode.value,
+    )
+    cacheCustomer(customer.value)
     recordRecentCustomer(customer.value)
   } catch (error) {
     console.error(error)
 
-    errorMessage.value =
-      error.message || '顧客情報の取得に失敗しました'
+    if (!cachedCustomer) {
+      errorMessage.value =
+        error.message || '顧客情報の取得に失敗しました'
+    }
   } finally {
     isLoading.value = false
   }
@@ -322,15 +339,12 @@ async function saveProfilePublic(event) {
     customer.value = {
       ...customer.value,
       profilePublic: Boolean(
-        result.profilePublic,
+        result.profilePublic ?? nextValue,
       ),
     }
 
     recordRecentCustomer(customer.value)
-
-    sessionStorage.removeItem(
-      'otomodachi-customers',
-    )
+    cacheCustomer(customer.value)
 
     profilePublicSuccess.value =
       nextValue
@@ -465,6 +479,7 @@ async function saveTransaction() {
     }
 
     recordRecentCustomer(customer.value)
+    cacheCustomer(customer.value)
 
     /*
      * The old history is now outdated.
@@ -472,11 +487,7 @@ async function saveTransaction() {
      */
     history.value = []
     
-    sessionStorage.removeItem('otomodachi-customers')
-
-    sessionStorage.removeItem('otomodachi-today-history')
-
-    sessionStorage.removeItem('otomodachi-today-history-time')
+    clearTodayHistoryCache()
 
     transactionSuccess.value = '保存しました'
 

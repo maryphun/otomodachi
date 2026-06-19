@@ -2,7 +2,10 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { getAllCustomers } from '../services/api'
+import {
+  getAllCustomers,
+  getCachedCustomers,
+} from '../services/api'
 
 const router = useRouter()
 
@@ -57,17 +60,29 @@ function openCustomer(customerCode) {
   router.push(`/customer/${customerCode}`)
 }
 
-async function loadCustomers() {
-  isLoading.value = true
+async function loadCustomers(forceRefresh = false) {
+  const cachedCustomers = forceRefresh
+    ? []
+    : getCachedCustomers()
+  const hasCachedCustomers = cachedCustomers.length > 0
+
+  if (hasCachedCustomers) {
+    customers.value = cachedCustomers
+  }
+
+  isLoading.value = !hasCachedCustomers
   errorMessage.value = ''
 
   try {
-    customers.value = await getAllCustomers()
+    customers.value =
+      await getAllCustomers(forceRefresh)
   } catch (error) {
     console.error(error)
 
-    errorMessage.value =
-      error.message || '顧客情報の取得に失敗しました'
+    if (!hasCachedCustomers) {
+      errorMessage.value =
+        error.message || '顧客情報の取得に失敗しました'
+    }
   } finally {
     isLoading.value = false
   }
@@ -164,7 +179,7 @@ onMounted(loadCustomers)
 
         <button
           type="button"
-          @click="loadCustomers"
+          @click="loadCustomers(true)"
         >
           再読み込み
         </button>

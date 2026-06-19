@@ -2,7 +2,10 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { createCustomer } from '../services/api'
+import {
+  cacheCustomer,
+  createCustomer,
+} from '../services/api'
 import {
   recordRecentCustomer,
 } from '../services/recentCustomers'
@@ -164,17 +167,10 @@ async function submitCustomer() {
     }
 
     /*
-     * 顧客一覧キャッシュを削除して、
-     * 次回検索時に新しい顧客を取得します。
-     */
-    sessionStorage.removeItem(
-      'otomodachi-customers',
-    )
-
-    /*
      * 最近アクセスした顧客にも記録します。
      */
     recordRecentCustomer(newCustomer)
+    cacheCustomer(newCustomer)
 
     /*
      * 登録した顧客の詳細ページへ移動します。

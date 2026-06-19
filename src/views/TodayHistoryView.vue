@@ -127,16 +127,25 @@ function formatLastUpdated(value) {
   }).format(date)
 }
 
+function getCachedValue(key) {
+  return (
+    sessionStorage.getItem(key) ||
+    localStorage.getItem(key)
+  )
+}
+
+function setCachedValue(key, value) {
+  sessionStorage.setItem(key, value)
+  localStorage.setItem(key, value)
+}
+
 function loadCachedHistory() {
   try {
-    const cached = sessionStorage.getItem(
-      CACHE_KEY,
-    )
+    const cached = getCachedValue(CACHE_KEY)
 
-    const cachedTime =
-      sessionStorage.getItem(
-        CACHE_TIME_KEY,
-      )
+    const cachedTime = getCachedValue(
+      CACHE_TIME_KEY,
+    )
 
     if (!cached) {
       return false
@@ -165,12 +174,12 @@ function loadCachedHistory() {
 function saveHistoryCache(data) {
   const now = new Date().toISOString()
 
-  sessionStorage.setItem(
+  setCachedValue(
     CACHE_KEY,
     JSON.stringify(data),
   )
 
-  sessionStorage.setItem(
+  setCachedValue(
     CACHE_TIME_KEY,
     now,
   )
