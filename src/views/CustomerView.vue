@@ -87,6 +87,12 @@ const expectedBalance = computed(() => {
   )
 })
 
+const hasOldLastVisit = computed(() => {
+  return isLastVisitOlderThanThreeMonths(
+    customer.value?.lastVisit,
+  )
+})
+
 const chartWidth = 640
 const chartHeight = 230
 const chartPaddingX = 34
@@ -341,6 +347,46 @@ function formatSignedNumber(value) {
   }
 
   return formatNumber(number)
+}
+
+function parseVisitDate(value) {
+  const dateText = String(value || '').trim()
+
+  if (!dateText) {
+    return null
+  }
+
+  const match = dateText.match(
+    /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/,
+  )
+
+  if (!match) {
+    return null
+  }
+
+  const date = new Date(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+  )
+
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function isLastVisitOlderThanThreeMonths(value) {
+  const visitDate = parseVisitDate(value)
+
+  if (!visitDate) {
+    return false
+  }
+
+  const threeMonthsAgo = new Date()
+  threeMonthsAgo.setHours(0, 0, 0, 0)
+  threeMonthsAgo.setMonth(
+    threeMonthsAgo.getMonth() - 3,
+  )
+
+  return visitDate < threeMonthsAgo
 }
 
 function getBalanceBefore(transaction) {
@@ -676,12 +722,19 @@ onMounted(loadCustomer)
             <span class="name-suffix">さん</span>
           </h2>
 
-          <p>
+          <p class="last-visit-text">
             {{
               customer.lastVisit
                 ? `最終来店日：${customer.lastVisit}`
                 : '最終来店日の記録なし'
             }}
+          </p>
+
+          <p
+            v-if="hasOldLastVisit"
+            class="last-visit-warning"
+          >
+            3ヶ月以上来店がありません
           </p>
         </div>
 
@@ -1300,11 +1353,27 @@ h1 {
   font-weight: 700;
 }
 
-.customer-identity p {
+.customer-identity .last-visit-text {
   margin: 9px 0 0;
 
   color: var(--color-muted);
   font-size: 14px;
+}
+
+.last-visit-warning {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin: 10px 0 0;
+  padding: 7px 10px;
+
+  color: #a62c36;
+  background: #fff0f1;
+  border: 1px solid rgb(166 44 54 / 24%);
+  border-radius: 999px;
+
+  font-size: 13px;
+  font-weight: 850;
 }
 
 .balance-panel {
