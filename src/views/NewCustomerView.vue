@@ -183,7 +183,7 @@ async function submitCustomer() {
 
     errorMessage.value =
       error.message ||
-      'おともだち登録に失敗しました'
+      '登録に失敗しました'
   } finally {
     isSaving.value = false
   }
