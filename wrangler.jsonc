@@ -2,10 +2,13 @@
   "name": "otomodachi",
   "compatibility_date": "2026-07-03",
   "main": "./src/worker.js",
+  "vars": {
+    "APPS_SCRIPT_URL": "https://script.google.com/macros/s/AKfycbwFWPM0q_BzYruL5TBs7JiTH6XgBlJxrQYmcraZG-WRXvj_THtXW-KAboe5lqXNwGuN/exec"
+  },
   "assets": {
     "directory": "./dist/",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": ["/api", "/api/*"]
   }
 }

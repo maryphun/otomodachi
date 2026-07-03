@@ -64,6 +64,8 @@ function doGet(e) {
   const callback = parameters.callback || '';
 
   try {
+    assertApiSecret_(parameters);
+
     const action = parameters.action || '';
     const data = dispatch_(action, parameters);
 
@@ -84,6 +86,22 @@ function doGet(e) {
       },
       callback,
     );
+  }
+}
+
+// 🔐 Cloudflare Workerからの呼び出しだけ通す
+function assertApiSecret_(parameters) {
+  const expectedSecret = PropertiesService
+    .getScriptProperties()
+    .getProperty('WEBAPP_API_SECRET');
+  const actualSecret = String(parameters.apiSecret || '');
+
+  if (!expectedSecret) {
+    throw new Error('API secret is not configured');
+  }
+
+  if (actualSecret !== expectedSecret) {
+    throw new Error('認証に失敗しました');
   }
 }
 

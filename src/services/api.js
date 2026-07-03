@@ -1,5 +1,4 @@
-const API_URL =
-  'https://script.google.com/macros/s/AKfycbwFWPM0q_BzYruL5TBs7JiTH6XgBlJxrQYmcraZG-WRXvj_THtXW-KAboe5lqXNwGuN/exec'
+const API_URL = import.meta.env.VITE_API_URL || '/api'
 
 const CACHE_VERSION = 'v2'
 const CUSTOMER_CACHE_KEY = `otomodachi-${CACHE_VERSION}-customers`
@@ -28,69 +27,49 @@ let allCustomersRequest = null
 const customerRequests = new Map()
 
 function apiGet(action, parameters = {}) {
-  return new Promise((resolve, reject) => {
-    const callbackName = `jsonp_${Date.now()}_${Math.random()
-      .toString(36)
-      .slice(2)}`
+  const url = new URL(API_URL, window.location.origin)
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => {
+    controller.abort()
+  }, 15000)
 
-    const url = new URL(API_URL)
+  url.searchParams.set('action', action)
 
-    url.searchParams.set('action', action)
-    url.searchParams.set('callback', callbackName)
+  for (const [key, value] of Object.entries(
+    parameters,
+  )) {
+    url.searchParams.set(key, String(value))
+  }
 
-    for (const [key, value] of Object.entries(
-      parameters,
-    )) {
-      url.searchParams.set(key, String(value))
-    }
+  return fetch(url.toString(), {
+    method: 'GET',
+    signal: controller.signal,
+    credentials: 'same-origin',
+  })
+    .then(async (response) => {
+      const result = await response.json().catch(() => null)
 
-    const script = document.createElement('script')
-
-    const cleanup = () => {
-      delete window[callbackName]
-      script.remove()
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      cleanup()
-      reject(
-        new Error(
-          'サーバーへの接続がタイムアウトしました',
-        ),
-      )
-    }, 15000)
-
-    window[callbackName] = (result) => {
-      window.clearTimeout(timeoutId)
-      cleanup()
-
-      if (!result.success) {
-        reject(
-          new Error(
-            result.error ||
-              'データの取得に失敗しました',
-          ),
+      if (!response.ok || !result?.success) {
+        throw new Error(
+          result?.error ||
+            'データの取得に失敗しました',
         )
-        return
       }
 
-      resolve(result.data)
-    }
+      return result.data
+    })
+    .catch((error) => {
+      if (error.name === 'AbortError') {
+        throw new Error(
+          'サーバーへの接続がタイムアウトしました',
+        )
+      }
 
-    script.onerror = () => {
+      throw error
+    })
+    .finally(() => {
       window.clearTimeout(timeoutId)
-      cleanup()
-
-      reject(
-        new Error(
-          'サーバーに接続できませんでした',
-        ),
-      )
-    }
-
-    script.src = url.toString()
-    document.body.appendChild(script)
-  })
+    })
 }
 
 function getStoredValue(storage, key) {
