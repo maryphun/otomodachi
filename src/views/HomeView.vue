@@ -121,6 +121,10 @@ function warmAppData() {
   })
 }
 
+function logout() {
+  window.location.assign('/auth/logout')
+}
+
 async function refreshCustomerList() {
   if (isRefreshingCustomers.value) {
     return
@@ -234,6 +238,13 @@ onMounted(warmAppData)
         ・
         更新日 {{ formattedUpdateDate }}
       </span>
+      <button
+        type="button"
+        class="logout-button"
+        @click="logout"
+      >
+        ログアウト
+      </button>
     </footer>
 
   </main>
@@ -512,6 +523,34 @@ h1 {
   font-weight: 650;
   letter-spacing: 0.03em;
   opacity: 0.78;
+}
+
+.logout-button {
+  min-height: 34px;
+  padding: 7px 14px;
+
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+
+  border: 1px solid rgb(23 50 77 / 10%);
+  border-radius: 999px;
+
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+
+  transition:
+    transform 180ms var(--ease-out),
+    background-color 180ms ease;
+}
+
+.logout-button:hover {
+  background: #e2edf6;
+  transform: translateY(-1px);
+}
+
+.logout-button:active {
+  transform: scale(0.96);
 }
 
 .refresh-section {
