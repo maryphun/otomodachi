@@ -414,6 +414,10 @@ onMounted(loadCustomers)
             </span>
 
             <span class="suggestion-code">
+              <template v-if="customer.customerReading">
+                {{ customer.customerReading }}
+                ・
+              </template>
               おともだちコード
               {{ customer.customerCode }}
             </span>

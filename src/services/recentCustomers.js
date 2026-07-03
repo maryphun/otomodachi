@@ -54,6 +54,9 @@ export function recordRecentCustomer(customer) {
     customerName: String(
       customer.customerName || '名前未登録',
     ),
+    customerReading: String(
+      customer.customerReading || '',
+    ),
 
     currentBalance: Number(
       customer.currentBalance || 0,

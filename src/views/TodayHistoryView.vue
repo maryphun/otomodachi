@@ -14,10 +14,10 @@ import {
 const router = useRouter()
 
 const CACHE_KEY =
-  'otomodachi-today-history'
+  'otomodachi-v3-today-history'
 
 const CACHE_TIME_KEY =
-  'otomodachi-today-history-time'
+  'otomodachi-v3-today-history-time'
 
 const HISTORY_FRESH_MS = 5 * 60 * 1000
 
@@ -96,18 +96,23 @@ function formatSignedNumber(value) {
 
 function formatTime(timestamp) {
   if (!timestamp) {
-    return ''
+    return '本日台帳'
   }
 
   const text = String(timestamp)
-
   const parts = text.split(' ')
 
   if (parts.length < 2) {
-    return text
+    return '本日台帳'
   }
 
-  return parts[1].slice(0, 5)
+  const time = parts[1].slice(0, 5)
+
+  if (time === '00:00') {
+    return '本日台帳'
+  }
+
+  return time
 }
 
 function formatLastUpdated(value) {
@@ -332,7 +337,7 @@ onMounted(() => {
         </span>
 
         <div>
-          <small>本日の貯うにょ</small>
+          <small>台帳上の増加</small>
 
           <strong class="positive-value">
             +{{ formatNumber(totalDeposit) }}
@@ -346,10 +351,12 @@ onMounted(() => {
         </span>
 
         <div>
-          <small>本日の引き出し</small>
+          <small>台帳上の減少</small>
 
           <strong class="negative-value">
-            -{{ formatNumber(totalWithdrawal) }}
+            {{
+              totalWithdrawal > 0 ? '-' : ''
+            }}{{ formatNumber(totalWithdrawal) }}
           </strong>
         </div>
       </article>
@@ -526,7 +533,7 @@ onMounted(() => {
             </strong>
 
             <small>
-              変更後
+              台帳残高
               {{
                 formatNumber(
                   transaction.balanceAfter,

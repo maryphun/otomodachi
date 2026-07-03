@@ -64,6 +64,18 @@ function goBack() {
   router.push('/')
 }
 
+function formatCustomerMeta(customer) {
+  if (!customer.lastVisit) {
+    return '来店記録なし'
+  }
+
+  const reading = customer.customerReading
+    ? `${customer.customerReading}・`
+    : ''
+
+  return `${reading}最終来店 ${customer.lastVisit}`
+}
+
 async function loadCustomers(forceRefresh = false) {
   const cachedCustomers = forceRefresh
     ? []
@@ -249,11 +261,7 @@ onMounted(loadCustomers)
               </strong>
 
               <small>
-                {{
-                  customer.lastVisit
-                    ? `最終来店 ${customer.lastVisit}`
-                    : '来店記録なし'
-                }}
+                {{ formatCustomerMeta(customer) }}
               </small>
             </span>
 

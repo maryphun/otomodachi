@@ -11,13 +11,13 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   addTransaction,
   cacheCustomer,
+  checkoutCustomer,
   clearCustomerHistoryCache,
   clearTodayHistoryCache,
   getCachedCustomer,
   getCachedHistory,
   getCustomer,
   getHistory,
-  updateCustomerProfilePublic,
 } from '../services/api'
 
 import {
@@ -38,13 +38,10 @@ const selectedAction = ref('')
 const isLoading = ref(true)
 const isHistoryLoading = ref(false)
 const isSavingTransaction = ref(false)
-const isSavingProfilePublic = ref(false)
 
 const errorMessage = ref('')
 const transactionError = ref('')
 const transactionSuccess = ref('')
-const profilePublicError = ref('')
-const profilePublicSuccess = ref('')
 
 const amountText = ref('')
 
@@ -68,6 +65,10 @@ const transactionAmount = computed(() => {
   return Number(amountText.value || 0)
 })
 
+const currentBalance = computed(() => {
+  return numberValue(customer.value?.currentBalance)
+})
+
 const transactionChange = computed(() => {
   if (selectedAction.value === 'withdrawal') {
     return -transactionAmount.value
@@ -81,9 +82,44 @@ const expectedBalance = computed(() => {
     return 0
   }
 
+  return currentBalance.value + transactionChange.value
+})
+
+const isWithdrawalTooLarge = computed(() => {
   return (
-    Number(customer.value.currentBalance) +
-    transactionChange.value
+    selectedAction.value === 'withdrawal' &&
+    transactionAmount.value > 0 &&
+    transactionAmount.value > currentBalance.value
+  )
+})
+
+const transactionValidationMessage = computed(() => {
+  if (isWithdrawalTooLarge.value) {
+    return '現在のうにょを超えて引き出すことはできません'
+  }
+
+  return ''
+})
+
+const displayedTransactionError = computed(() => {
+  return (
+    transactionError.value ||
+    transactionValidationMessage.value
+  )
+})
+
+const canSaveTransaction = computed(() => {
+  if (selectedAction.value === 'checkout') {
+    return (
+      !isSavingTransaction.value &&
+      transactionAmount.value >= 0
+    )
+  }
+
+  return (
+    !isSavingTransaction.value &&
+    transactionAmount.value > 0 &&
+    !transactionValidationMessage.value
   )
 })
 
@@ -93,10 +129,57 @@ const hasOldLastVisit = computed(() => {
   )
 })
 
+const customerLedgerItems = computed(() => {
+  if (!customer.value) {
+    return []
+  }
+
+  const items = []
+
+  if (hasDisplayValue(customer.value.customerReading)) {
+    items.push({
+      label: '読み方',
+      value: customer.value.customerReading,
+    })
+  }
+
+  if (hasDisplayValue(customer.value.otoPoints)) {
+    items.push({
+      label: 'おとぽいんと',
+      value: formatNumber(customer.value.otoPoints),
+    })
+  }
+
+  if (hasDisplayValue(customer.value.visitCount)) {
+    items.push({
+      label: '来店回数',
+      value: `${formatNumber(customer.value.visitCount)}回`,
+    })
+  }
+
+  if (hasDisplayValue(customer.value.firstVisit)) {
+    items.push({
+      label: '初回来店日',
+      value: customer.value.firstVisit,
+    })
+  }
+
+  if (hasDisplayValue(customer.value.memo)) {
+    items.push({
+      label: '備考',
+      value: customer.value.memo,
+      wide: true,
+    })
+  }
+
+  return items
+})
+
 const chartWidth = 640
 const chartHeight = 230
 const chartPaddingX = 34
 const chartPaddingY = 24
+const chartLineOnlyThreshold = 28
 
 const chartTransactions = computed(() => {
   return [...history.value]
@@ -189,6 +272,18 @@ const chartPolylinePoints = computed(() => {
     .join(' ')
 })
 
+const isDenseChart = computed(() => {
+  return chartPoints.value.length > chartLineOnlyThreshold
+})
+
+const visibleChartPoints = computed(() => {
+  if (isDenseChart.value) {
+    return []
+  }
+
+  return chartPoints.value
+})
+
 const chartAxisLabels = computed(() => {
   const points = chartPoints.value
 
@@ -196,6 +291,7 @@ const chartAxisLabels = computed(() => {
     return []
   }
 
+  const candidates = []
   const labels = []
   let lastDate = ''
 
@@ -204,7 +300,7 @@ const chartAxisLabels = computed(() => {
     const dateText = formatChartDate(point.timestamp)
 
     if (dateText && dateText !== lastDate) {
-      labels.push({
+      candidates.push({
         ...point,
         anchor: getChartTextAnchor(point.x),
         text: dateText,
@@ -212,6 +308,18 @@ const chartAxisLabels = computed(() => {
 
       lastDate = dateText
     }
+  }
+
+  const minimumGap = getChartDateLabelGap(points.length)
+  let lastLabelX = Number.NEGATIVE_INFINITY
+
+  for (const candidate of candidates) {
+    if (candidate.x - lastLabelX < minimumGap) {
+      continue
+    }
+
+    labels.push(candidate)
+    lastLabelX = candidate.x
   }
 
   return labels
@@ -226,7 +334,7 @@ const chartValueLabels = computed(() => {
 
   const labels = []
   let lastLabelX = Number.NEGATIVE_INFINITY
-  const minimumGap = 92
+  const minimumGap = getChartValueLabelGap(points.length)
 
   for (const point of points) {
     if (point.x - lastLabelX < minimumGap) {
@@ -256,6 +364,30 @@ function getChartTextAnchor(x) {
   }
 
   return 'middle'
+}
+
+function getChartDateLabelGap(pointCount) {
+  if (pointCount > 48) {
+    return 94
+  }
+
+  if (pointCount > chartLineOnlyThreshold) {
+    return 78
+  }
+
+  return 54
+}
+
+function getChartValueLabelGap(pointCount) {
+  if (pointCount > 48) {
+    return 170
+  }
+
+  if (pointCount > chartLineOnlyThreshold) {
+    return 136
+  }
+
+  return 92
 }
 
 function getChartValueLabelY(point) {
@@ -288,7 +420,14 @@ async function scrollChartToNewest() {
   await nextTick()
 }
 
+function clearTransactionFeedback() {
+  transactionError.value = ''
+  transactionSuccess.value = ''
+}
+
 function addAmountDigit(digit) {
+  clearTransactionFeedback()
+
   if (amountText.value.length >= 10) {
     return
   }
@@ -302,14 +441,20 @@ function addAmountDigit(digit) {
 }
 
 function clearAmount() {
+  clearTransactionFeedback()
   amountText.value = ''
 }
 
 function removeAmountDigit() {
+  clearTransactionFeedback()
   amountText.value = amountText.value.slice(0, -1)
 }
 
 function openTransaction(action) {
+  if (isSavingTransaction.value) {
+    return
+  }
+
   selectedAction.value = action
   amountText.value = ''
   transactionError.value = ''
@@ -336,17 +481,46 @@ function goHome() {
 }
 
 function formatNumber(value) {
-  return Number(value || 0).toLocaleString('ja-JP')
+  return numberValue(value).toLocaleString('ja-JP')
 }
 
 function formatSignedNumber(value) {
-  const number = Number(value || 0)
+  const number = numberValue(value)
 
   if (number > 0) {
     return `+${formatNumber(number)}`
   }
 
   return formatNumber(number)
+}
+
+function numberValue(value) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0
+  }
+
+  const normalized = String(value || '').replace(
+    /[^0-9.-]/g,
+    '',
+  )
+  const number = Number(normalized)
+
+  return Number.isFinite(number) ? number : 0
+}
+
+function hasDisplayValue(value) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value !== 0
+  }
+
+  return String(value || '').trim().length > 0
+}
+
+function formatLedgerDate(timestamp) {
+  const text = String(timestamp || '')
+  const datePart = text.split(' ')[0]
+
+  return datePart || text
 }
 
 function parseVisitDate(value) {
@@ -390,6 +564,14 @@ function isLastVisitOlderThanThreeMonths(value) {
 }
 
 function getBalanceBefore(transaction) {
+  const balanceBefore = Number(
+    transaction.balanceBefore,
+  )
+
+  if (Number.isFinite(balanceBefore)) {
+    return balanceBefore
+  }
+
   return (
     Number(transaction.balanceAfter || 0) -
     Number(transaction.chipChange || 0)
@@ -425,76 +607,6 @@ async function loadCustomer() {
     }
   } finally {
     isLoading.value = false
-  }
-}
-
-async function saveProfilePublic(event) {
-  if (!customer.value || isSavingProfilePublic.value) {
-    return
-  }
-
-  const checkbox = event.currentTarget
-  const previousValue = Boolean(
-    customer.value.profilePublic,
-  )
-  const nextValue = Boolean(checkbox.checked)
-
-  const confirmed = window.confirm(
-    nextValue
-      ? 'このおともだちのプロフィールを公開しますか？'
-      : 'このおともだちのプロフィールを非公開にしますか？',
-  )
-
-  if (!confirmed) {
-    checkbox.checked = previousValue
-    return
-  }
-
-  isSavingProfilePublic.value = true
-  profilePublicError.value = ''
-  profilePublicSuccess.value = ''
-
-  customer.value = {
-    ...customer.value,
-    profilePublic: nextValue,
-  }
-
-  try {
-    const result =
-      await updateCustomerProfilePublic(
-        customerCode.value,
-        nextValue,
-      )
-
-    customer.value = {
-      ...customer.value,
-      profilePublic: Boolean(
-        result.profilePublic ?? nextValue,
-      ),
-    }
-
-    recordRecentCustomer(customer.value)
-    cacheCustomer(customer.value)
-
-    profilePublicSuccess.value =
-      nextValue
-        ? 'プロフィールを公開しました'
-        : 'プロフィールを非公開にしました'
-  } catch (error) {
-    console.error(error)
-
-    customer.value = {
-      ...customer.value,
-      profilePublic: previousValue,
-    }
-
-    checkbox.checked = previousValue
-
-    profilePublicError.value =
-      error.message ||
-      'プロフィール公開設定の保存に失敗しました'
-  } finally {
-    isSavingProfilePublic.value = false
   }
 }
 
@@ -550,27 +662,29 @@ async function saveTransaction() {
 
   const amount = transactionAmount.value
 
-  if (!Number.isInteger(amount) || amount <= 0) {
+  const isCheckout = selectedAction.value === 'checkout'
+
+  if (
+    !Number.isInteger(amount) ||
+    (isCheckout ? amount < 0 : amount <= 0)
+  ) {
     transactionError.value =
-      '1以上のうにょ数を入力してください'
+      isCheckout
+        ? '0以上のうにょ数を入力してください'
+        : '1以上のうにょ数を入力してください'
     return
   }
 
-  if (expectedBalance.value < 0) {
+  if (transactionValidationMessage.value) {
     transactionError.value =
-      '現在のうにょを超えて引き出すことはできません'
+      transactionValidationMessage.value
     return
   }
 
-  const actionName =
-    selectedAction.value === 'deposit'
-      ? '貯うにょ'
-      : '引き出し'
+  const actionName = getActionName(selectedAction.value)
 
   const change = transactionChange.value
-  const oldBalance = Number(
-    customer.value.currentBalance,
-  )
+  const oldBalance = currentBalance.value
   const newBalance = oldBalance + change
   const oldLastVisit = customer.value.lastVisit
 
@@ -578,7 +692,9 @@ async function saveTransaction() {
     [
       `おともだち：${customer.value.customerCode} ${customer.value.customerName}さん`,
       `操作：${actionName}`,
-      `増減：${formatSignedNumber(change)}`,
+      isCheckout
+        ? `退店時：${formatNumber(amount)}`
+        : `増減：${formatSignedNumber(change)}`,
       `現在：${formatNumber(oldBalance)}`,
       `変更後：${formatNumber(newBalance)}`,
       '',
@@ -594,31 +710,26 @@ async function saveTransaction() {
   transactionError.value = ''
   transactionSuccess.value = '保存しています…'
 
-  /*
-   * Optimistic update:
-   * Change the displayed balance immediately.
-   */
-  customer.value = {
-    ...customer.value,
-    currentBalance: newBalance,
-  }
-
-  amountText.value = ''
-
   try {
-    const result = await addTransaction(
-      customerCode.value,
-      change,
-    )
+    const result = isCheckout
+      ? await checkoutCustomer(
+          customerCode.value,
+          amount,
+        )
+      : await addTransaction(
+          customerCode.value,
+          change,
+        )
 
     /*
-     * Replace the temporary optimistic value with
-     * the confirmed value returned by Apps Script.
+     * Use the confirmed value returned by Apps Script.
      */
     customer.value = {
       ...customer.value,
       currentBalance: result.newBalance,
       lastVisit: result.timestamp.slice(0, 10),
+      visitCount:
+        result.visitCount ?? customer.value.visitCount,
     }
 
     recordRecentCustomer(customer.value)
@@ -634,6 +745,7 @@ async function saveTransaction() {
     clearTodayHistoryCache()
 
     transactionSuccess.value = '保存しました'
+    amountText.value = ''
 
     window.setTimeout(() => {
       transactionSuccess.value = ''
@@ -642,9 +754,6 @@ async function saveTransaction() {
   } catch (error) {
     console.error(error)
 
-    /*
-     * Saving failed, so restore the previous balance.
-     */
     customer.value = {
       ...customer.value,
       currentBalance: oldBalance,
@@ -658,6 +767,22 @@ async function saveTransaction() {
   } finally {
     isSavingTransaction.value = false
   }
+}
+
+function getActionName(action) {
+  if (action === 'deposit') {
+    return '貯うにょ'
+  }
+
+  if (action === 'withdrawal') {
+    return '引き出し'
+  }
+
+  if (action === 'checkout') {
+    return '退店'
+  }
+
+  return 'うにょ履歴'
 }
 
 onMounted(loadCustomer)
@@ -749,57 +874,21 @@ onMounted(loadCustomer)
         </div>
       </section>
 
-      <section class="profile-public-card">
-        <div class="profile-public-header">
-          <div>
-            <p class="profile-public-label">
-              プロフィール公開
-            </p>
-
-            <strong
-              class="profile-public-status"
-              :class="{
-                'profile-public-status--on':
-                  customer.profilePublic,
-              }"
-            >
-              {{
-                customer.profilePublic
-                  ? '公開中'
-                  : '非公開'
-              }}
-            </strong>
-          </div>
-
-          <label class="profile-public-switch">
-            <input
-              type="checkbox"
-              class="profile-public-input"
-              :checked="customer.profilePublic"
-              :disabled="isSavingProfilePublic"
-              @change="saveProfilePublic"
-            />
-
-            <span
-              class="profile-public-control"
-              aria-hidden="true"
-            ></span>
-          </label>
+      <section
+        v-if="customerLedgerItems.length"
+        class="ledger-info-card"
+      >
+        <div
+          v-for="item in customerLedgerItems"
+          :key="item.label"
+          class="ledger-info-item"
+          :class="{
+            'ledger-info-item--wide': item.wide,
+          }"
+        >
+          <span>{{ item.label }}</span>
+          <strong>{{ item.value }}</strong>
         </div>
-
-        <p
-          v-if="profilePublicSuccess"
-          class="profile-public-message profile-public-message--success"
-        >
-          {{ profilePublicSuccess }}
-        </p>
-
-        <p
-          v-if="profilePublicError"
-          class="profile-public-message profile-public-message--error"
-        >
-          {{ profilePublicError }}
-        </p>
       </section>
 
       <section class="action-section">
@@ -832,6 +921,18 @@ onMounted(loadCustomer)
 
           <button
             type="button"
+            class="action-button action-button--checkout"
+            @click="openTransaction('checkout')"
+          >
+            <span class="action-icon">退</span>
+
+            <span class="action-copy">
+              <strong>退店</strong>
+            </span>
+          </button>
+
+          <button
+            type="button"
             class="action-button action-button--history"
             @click="showHistory"
           >
@@ -844,21 +945,21 @@ onMounted(loadCustomer)
         </div>
       </section>
 
-      <Teleport to="body">
-        <Transition name="modal">
-          <div
-            v-if="selectedAction"
-            class="modal-backdrop"
-            @click.self="closeAction"
-          >
-            <section class="transaction-modal">
+      <div
+        v-if="selectedAction"
+        class="modal-backdrop"
+        @click.self="closeAction"
+      >
+        <section class="transaction-modal">
               <div class="selected-action-header">
                 <div>
                   <p class="modal-eyebrow">
                     {{
                       selectedAction === 'history'
                         ? 'UNYO HISTORY'
-                        : 'UNYO TRANSACTION'
+                        : selectedAction === 'checkout'
+                          ? 'CHECK OUT'
+                          : 'UNYO TRANSACTION'
                     }}
                   </p>
 
@@ -874,6 +975,14 @@ onMounted(loadCustomer)
                     "
                   >
                     引き出し
+                  </h3>
+
+                  <h3
+                    v-else-if="
+                      selectedAction === 'checkout'
+                    "
+                  >
+                    退店
                   </h3>
 
                   <h3 v-else>
@@ -895,7 +1004,8 @@ onMounted(loadCustomer)
               <div
                 v-if="
                   selectedAction === 'deposit' ||
-                  selectedAction === 'withdrawal'
+                  selectedAction === 'withdrawal' ||
+                  selectedAction === 'checkout'
                 "
                 class="transaction-form"
               >
@@ -904,7 +1014,9 @@ onMounted(loadCustomer)
                     {{
                       selectedAction === 'deposit'
                         ? '追加するうにょ'
-                        : '引き出すうにょ'
+                        : selectedAction === 'withdrawal'
+                          ? '引き出すうにょ'
+                          : '退店時のうにょ'
                     }}
                   </span>
 
@@ -923,10 +1035,7 @@ onMounted(loadCustomer)
 
                     <strong>
                       {{
-                        formatNumber(
-                          customer.currentBalance -
-                            transactionChange,
-                        )
+                        formatNumber(currentBalance)
                       }}
                     </strong>
                   </div>
@@ -941,7 +1050,7 @@ onMounted(loadCustomer)
                     <strong
                       :class="{
                         'invalid-balance':
-                          expectedBalance < 0,
+                          isWithdrawalTooLarge,
                       }"
                     >
                       {{ formatNumber(expectedBalance) }}
@@ -991,10 +1100,10 @@ onMounted(loadCustomer)
                 </div>
 
                 <p
-                  v-if="transactionError"
+                  v-if="displayedTransactionError"
                   class="transaction-message transaction-message--error"
                 >
-                  {{ transactionError }}
+                  {{ displayedTransactionError }}
                 </p>
 
                 <p
@@ -1010,14 +1119,12 @@ onMounted(loadCustomer)
                   :class="{
                     'save-transaction-button--withdrawal':
                       selectedAction === 'withdrawal',
+                    'save-transaction-button--checkout':
+                      selectedAction === 'checkout',
                     'save-transaction-button--saving':
                       isSavingTransaction,
                   }"
-                  :disabled="
-                    isSavingTransaction ||
-                    transactionAmount <= 0 ||
-                    expectedBalance < 0
-                  "
+                  :disabled="!canSaveTransaction"
                   @click="saveTransaction"
                 >
                   <span v-if="isSavingTransaction">
@@ -1030,6 +1137,14 @@ onMounted(loadCustomer)
                     "
                   >
                     ＋ 貯うにょを実行
+                  </span>
+
+                  <span
+                    v-else-if="
+                      selectedAction === 'checkout'
+                    "
+                  >
+                    退店を記録
                   </span>
 
                   <span v-else>
@@ -1119,10 +1234,13 @@ onMounted(loadCustomer)
             v-if="chartPoints.length > 1"
             :points="chartPolylinePoints"
             class="chart-line"
+            :class="{
+              'chart-line--dense': isDenseChart,
+            }"
           />
 
           <g
-            v-for="point in chartPoints"
+            v-for="point in visibleChartPoints"
             :key="point.transactionId"
             class="chart-point-group"
           >
@@ -1182,7 +1300,7 @@ onMounted(loadCustomer)
         class="history-item"
       >
         <div class="history-date">
-          {{ transaction.timestamp }}
+          {{ formatLedgerDate(transaction.timestamp) }}
         </div>
 
         <div class="history-values">
@@ -1227,10 +1345,8 @@ onMounted(loadCustomer)
   </template>
 </div>
 
-            </section>
-          </div>
-        </Transition>
-      </Teleport>
+        </section>
+      </div>
     </template>
   </main>
 </template>
@@ -1412,7 +1528,10 @@ h1 {
   font-size: 13px;
 }
 
-.profile-public-card {
+.ledger-info-card {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
   margin-top: 16px;
   padding: 18px;
 
@@ -1425,125 +1544,44 @@ h1 {
     0 10px 24px rgb(15 34 53 / 4%);
 }
 
-.profile-public-header {
+.ledger-info-item {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 18px;
-}
+  gap: 14px;
 
-.profile-public-label {
-  margin: 0 0 5px;
-
-  color: var(--color-muted);
-  font-size: 12px;
-  font-weight: 750;
-}
-
-.profile-public-status {
-  color: var(--color-muted);
-  font-size: 18px;
-}
-
-.profile-public-status--on {
-  color: #197044;
-}
-
-.profile-public-description {
-  margin: 12px 0 0;
-
-  color: var(--color-muted);
-  font-size: 12px;
-  line-height: 1.7;
-}
-
-.profile-public-switch {
-  position: relative;
-  flex: 0 0 auto;
-
-  display: block;
-
-  cursor: pointer;
-}
-
-.profile-public-input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.profile-public-control {
-  position: relative;
-
-  display: block;
-
-  width: 60px;
-  height: 34px;
-
-  background: #c8cdd3;
-  border-radius: 999px;
-
-  transition: background-color 180ms ease;
-}
-
-.profile-public-control::after {
-  content: '';
-
-  position: absolute;
-  top: 4px;
-  left: 4px;
-
-  width: 26px;
-  height: 26px;
-
-  background: white;
-  border-radius: 50%;
-  box-shadow: 0 2px 7px rgb(15 34 53 / 22%);
-
-  transition: transform 180ms var(--ease-out);
-}
-
-.profile-public-input:checked + .profile-public-control {
-  background: #2b7a4b;
-}
-
-.profile-public-input:checked +
-.profile-public-control::after {
-  transform: translateX(26px);
-}
-
-.profile-public-input:focus-visible +
-.profile-public-control {
-  outline: 3px solid rgb(23 50 77 / 24%);
-  outline-offset: 3px;
-}
-
-.profile-public-input:disabled +
-.profile-public-control {
-  cursor: wait;
-  opacity: 0.55;
-}
-
-.profile-public-message {
-  margin: 12px 0 0;
+  min-height: 38px;
   padding: 10px 12px;
 
-  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid rgb(23 50 77 / 7%);
+  border-radius: 14px;
+}
 
-  font-size: 13px;
+.ledger-info-item span {
+  flex: 0 0 auto;
+
+  color: var(--color-muted);
+  font-size: 12px;
   font-weight: 750;
 }
 
-.profile-public-message--success {
-  color: #17643d;
-  background: #e8f7ef;
+.ledger-info-item strong {
+  min-width: 0;
+
+  font-size: 14px;
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
-.profile-public-message--error {
-  color: #9a3039;
-  background: #fff0f1;
+.ledger-info-item--wide {
+  display: grid;
+  gap: 5px;
+}
+
+.ledger-info-item--wide strong {
+  text-align: left;
+  line-height: 1.6;
 }
 
 .action-section {
@@ -1629,6 +1667,11 @@ h1 {
 .action-button--withdrawal .action-icon {
   color: #a62c36;
   background: #fff0f1;
+}
+
+.action-button--checkout .action-icon {
+  color: #7a4d00;
+  background: #fff5d8;
 }
 
 .action-button--history .action-icon {
@@ -1882,6 +1925,11 @@ h1 {
 .save-transaction-button--withdrawal {
   background: #a62c36;
   box-shadow: 0 10px 24px rgb(166 44 54 / 20%);
+}
+
+.save-transaction-button--checkout {
+  background: #a56516;
+  box-shadow: 0 10px 24px rgb(165 101 22 / 20%);
 }
 
 .save-transaction-button:hover:not(:disabled) {
@@ -2202,6 +2250,10 @@ h1 {
   stroke-linejoin: round;
 }
 
+.chart-line--dense {
+  stroke-width: 3;
+}
+
 .chart-point {
   fill: white;
   stroke: var(--color-primary);
@@ -2277,9 +2329,18 @@ h1 {
     justify-content: center;
   }
 
+  .ledger-info-card {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+
+  .ledger-info-item--wide {
+    grid-column: 1 / -1;
+  }
+
   .action-grid {
     grid-template-columns:
-      repeat(3, minmax(0, 1fr));
+      repeat(4, minmax(0, 1fr));
   }
 
   .action-button {

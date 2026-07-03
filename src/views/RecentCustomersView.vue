@@ -158,6 +158,10 @@ onMounted(loadRecentCustomers)
             </strong>
 
             <span class="customer-meta">
+              <template v-if="customer.customerReading">
+                {{ customer.customerReading }}
+                ・
+              </template>
               おともだちコード
               {{ customer.customerCode }}
             </span>

@@ -62,7 +62,7 @@ function resetPageScroll() {
   transform: translate3d(-10px, 0, 0) scale(0.998);
 }
 
-.page-slide-enter-active :where(button, .menu-card, .suggestion-card, .transaction-card, .customer-card, .action-button, .search-card, .registration-card, .profile-public-card) {
+.page-slide-enter-active :where(button, .menu-card, .suggestion-card, .transaction-card, .customer-card, .action-button, .search-card, .registration-card, .ledger-info-card) {
   animation: page-control-in 170ms var(--ease-out) both;
 }
 
@@ -89,7 +89,7 @@ function resetPageScroll() {
     transform: none;
   }
 
-  .page-slide-enter-active :where(button, .menu-card, .suggestion-card, .transaction-card, .customer-card, .action-button, .search-card, .registration-card, .profile-public-card) {
+  .page-slide-enter-active :where(button, .menu-card, .suggestion-card, .transaction-card, .customer-card, .action-button, .search-card, .registration-card, .ledger-info-card) {
     animation-duration: 1ms;
   }
 }

@@ -1,15 +1,16 @@
 const API_URL =
-  'https://script.google.com/macros/s/AKfycbyjoYPTRMj5lTuC6uPdJMXh0I_pgkCZOodOJOarGhW6caKwNbzUkqSHHurJo0dFCUdq/exec'
+  'https://script.google.com/macros/s/AKfycbwFWPM0q_BzYruL5TBs7JiTH6XgBlJxrQYmcraZG-WRXvj_THtXW-KAboe5lqXNwGuN/exec'
 
-const CUSTOMER_CACHE_KEY = 'otomodachi-customers'
+const CACHE_VERSION = 'v2'
+const CUSTOMER_CACHE_KEY = `otomodachi-${CACHE_VERSION}-customers`
 const CUSTOMER_DETAIL_CACHE_PREFIX =
-  'otomodachi-customer-'
+  `otomodachi-${CACHE_VERSION}-customer-`
 const TODAY_HISTORY_CACHE_KEY =
-  'otomodachi-today-history'
+  `otomodachi-${CACHE_VERSION}-today-history`
 const TODAY_HISTORY_CACHE_TIME_KEY =
-  'otomodachi-today-history-time'
+  `otomodachi-${CACHE_VERSION}-today-history-time`
 const CUSTOMER_HISTORY_CACHE_PREFIX =
-  'otomodachi-history-'
+  `otomodachi-${CACHE_VERSION}-history-`
 
 const MINUTE_MS = 60 * 1000
 const HOUR_MS = 60 * MINUTE_MS
@@ -238,14 +239,23 @@ function normalizeCustomer(customer) {
       customer.customerCode,
     ),
     customerName: String(customer.customerName || ''),
+    customerReading: String(
+      customer.customerReading || '',
+    ),
     currentBalance: Number(customer.currentBalance || 0),
-    profilePublic: Boolean(customer.profilePublic),
     lastVisit: String(customer.lastVisit || ''),
+    otoPoints: Number(customer.otoPoints || 0),
+    memo: String(customer.memo || ''),
+    visitCount: Number(customer.visitCount || 0),
+    firstVisit: String(customer.firstVisit || ''),
     normalizedCustomerCode: normalizeCustomerCode(
       customer.customerCode,
     ).replace(/^0+/, ''),
     normalizedCustomerName: normalizeSearchText(
-      customer.customerName,
+      [
+        customer.customerName,
+        customer.customerReading,
+      ].join(' '),
     ),
   }
 }
@@ -577,25 +587,23 @@ export function addTransaction(
   })
 }
 
+export function checkoutCustomer(
+  customerCode,
+  endingAmount,
+) {
+  return apiGet('checkoutCustomer', {
+    customerCode,
+    endingAmount,
+  })
+}
+
 export function createCustomer(
   customerName,
   initialBalance = 0,
-  profilePublic = false,
 ) {
   return apiGet('createCustomer', {
     customerName,
     initialBalance,
-    profilePublic,
-  })
-}
-
-export function updateCustomerProfilePublic(
-  customerCode,
-  profilePublic,
-) {
-  return apiGet('updateCustomerProfilePublic', {
-    customerCode,
-    profilePublic,
   })
 }
 
