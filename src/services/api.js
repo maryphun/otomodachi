@@ -8,6 +8,10 @@ const TODAY_HISTORY_CACHE_KEY =
   `otomodachi-${CACHE_VERSION}-today-history`
 const TODAY_HISTORY_CACHE_TIME_KEY =
   `otomodachi-${CACHE_VERSION}-today-history-time`
+const TODAY_ACTIVE_CUSTOMERS_CACHE_KEY =
+  `otomodachi-${CACHE_VERSION}-today-active-customers`
+const TODAY_ACTIVE_CUSTOMERS_CACHE_TIME_KEY =
+  `otomodachi-${CACHE_VERSION}-today-active-customers-time`
 const CUSTOMER_HISTORY_CACHE_PREFIX =
   `otomodachi-${CACHE_VERSION}-history-`
 
@@ -161,6 +165,28 @@ function writeCache(key, data, savedAt = Date.now()) {
 function removeCache(key) {
   removeStoredValue(sessionStorage, key)
   removeStoredValue(localStorage, key)
+}
+
+function getTokyoDateKey(value) {
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return ''
+  }
+
+  return new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date)
+}
+
+function isTodayInTokyo(value) {
+  return (
+    getTokyoDateKey(value) ===
+    getTokyoDateKey(new Date())
+  )
 }
 
 function getCustomerDetailCacheKey(customerCode) {
@@ -348,6 +374,19 @@ export function getCachedHistory(
   return cached.data
 }
 
+export function getCachedTodayActiveCustomers() {
+  const cached = readTodayActiveCustomersCacheRecord()
+
+  if (!cached) {
+    return null
+  }
+
+  return {
+    customers: cached.data,
+    savedAt: cached.savedAt,
+  }
+}
+
 export function cacheCustomer(customer) {
   const normalizedCustomer = normalizeCustomer(customer)
 
@@ -369,6 +408,11 @@ export function clearCustomerHistoryCache(customerCode) {
 export function clearTodayHistoryCache() {
   removeCache(TODAY_HISTORY_CACHE_KEY)
   removeCache(TODAY_HISTORY_CACHE_TIME_KEY)
+}
+
+export function clearTodayActiveCustomersCache() {
+  removeCache(TODAY_ACTIVE_CUSTOMERS_CACHE_KEY)
+  removeCache(TODAY_ACTIVE_CUSTOMERS_CACHE_TIME_KEY)
 }
 
 function readTodayHistoryCache(maxAgeMs) {
@@ -439,6 +483,177 @@ function writeTodayHistoryCache(data) {
     TODAY_HISTORY_CACHE_TIME_KEY,
     now,
   )
+}
+
+function readTodayActiveCustomersCacheRecord(
+  maxAgeMs = Number.POSITIVE_INFINITY,
+) {
+  const cached =
+    getStoredValue(
+      sessionStorage,
+      TODAY_ACTIVE_CUSTOMERS_CACHE_KEY,
+    ) ||
+    getStoredValue(
+      localStorage,
+      TODAY_ACTIVE_CUSTOMERS_CACHE_KEY,
+    )
+
+  const cachedTime =
+    getStoredValue(
+      sessionStorage,
+      TODAY_ACTIVE_CUSTOMERS_CACHE_TIME_KEY,
+    ) ||
+    getStoredValue(
+      localStorage,
+      TODAY_ACTIVE_CUSTOMERS_CACHE_TIME_KEY,
+    )
+
+  if (!cached || !cachedTime) {
+    return null
+  }
+
+  const savedAt = new Date(cachedTime).getTime()
+
+  if (
+    Number.isNaN(savedAt) ||
+    Date.now() - savedAt > maxAgeMs ||
+    !isTodayInTokyo(cachedTime)
+  ) {
+    return null
+  }
+
+  try {
+    const data = JSON.parse(cached)
+
+    if (!Array.isArray(data)) {
+      return null
+    }
+
+    return {
+      data,
+      savedAt: cachedTime,
+    }
+  } catch (error) {
+    console.error('店内キャッシュの解析に失敗しました', error)
+    return null
+  }
+}
+
+function readTodayActiveCustomersCache(
+  maxAgeMs = Number.POSITIVE_INFINITY,
+) {
+  return (
+    readTodayActiveCustomersCacheRecord(maxAgeMs)
+      ?.data || null
+  )
+}
+
+function writeTodayActiveCustomersCache(data) {
+  const now = new Date().toISOString()
+
+  setStoredValue(
+    sessionStorage,
+    TODAY_ACTIVE_CUSTOMERS_CACHE_KEY,
+    JSON.stringify(data),
+  )
+  setStoredValue(
+    localStorage,
+    TODAY_ACTIVE_CUSTOMERS_CACHE_KEY,
+    JSON.stringify(data),
+  )
+  setStoredValue(
+    sessionStorage,
+    TODAY_ACTIVE_CUSTOMERS_CACHE_TIME_KEY,
+    now,
+  )
+  setStoredValue(
+    localStorage,
+    TODAY_ACTIVE_CUSTOMERS_CACHE_TIME_KEY,
+    now,
+  )
+}
+
+function updateTodayActiveCustomersCacheFromTransaction(
+  transaction,
+) {
+  const customerCode = normalizeCustomerCode(
+    transaction?.customerCode,
+  )
+  const chipChange = Number(transaction?.chipChange || 0)
+  const newBalance = Number(transaction?.newBalance)
+
+  if (
+    !customerCode ||
+    !Number.isFinite(chipChange) ||
+    chipChange === 0 ||
+    !Number.isFinite(newBalance)
+  ) {
+    return
+  }
+
+  const cached = readTodayActiveCustomersCacheRecord()
+  const customers = cached ? [...cached.data] : []
+  const index = customers.findIndex((customer) =>
+    customerCodesMatch(
+      customer.customerCode,
+      customerCode,
+    ),
+  )
+  const existing = index >= 0 ? customers[index] : null
+  const cachedCustomer = getCachedCustomer(customerCode)
+  const balanceBefore = Number(
+    existing?.balanceBefore,
+  )
+  const previousChipChange = Number(
+    existing?.chipChange || 0,
+  )
+  const previousMovementCount = Number(
+    existing?.movementCount || 0,
+  )
+  const nextCustomer = {
+    ...existing,
+    customerCode,
+    customerName: String(
+      transaction.customerName ||
+        existing?.customerName ||
+        cachedCustomer?.customerName ||
+        '',
+    ),
+    date: String(transaction.timestamp || '').slice(0, 10),
+    balanceBefore: Number.isFinite(balanceBefore)
+      ? balanceBefore
+      : newBalance - chipChange,
+    currentBalance: newBalance,
+    chipChange: previousChipChange + chipChange,
+    movementCount: previousMovementCount + 1,
+    lastMovementAmount: chipChange,
+  }
+
+  if (index >= 0) {
+    customers[index] = nextCustomer
+  } else {
+    customers.push(nextCustomer)
+  }
+
+  writeTodayActiveCustomersCache(customers)
+}
+
+function removeTodayActiveCustomerFromCache(customerCode) {
+  const cached = readTodayActiveCustomersCacheRecord()
+
+  if (!cached) {
+    return
+  }
+
+  const customers = cached.data.filter(
+    (customer) =>
+      !customerCodesMatch(
+        customer.customerCode,
+        customerCode,
+      ),
+  )
+
+  writeTodayActiveCustomersCache(customers)
 }
 
 export async function getAllCustomers(
@@ -563,6 +778,12 @@ export function addTransaction(
   return apiGet('addTransaction', {
     customerCode,
     chipChange,
+  }).then((result) => {
+    updateTodayActiveCustomersCacheFromTransaction(
+      result,
+    )
+
+    return result
   })
 }
 
@@ -573,6 +794,12 @@ export function checkoutCustomer(
   return apiGet('checkoutCustomer', {
     customerCode,
     endingAmount,
+  }).then((result) => {
+    removeTodayActiveCustomerFromCache(
+      result.customerCode || customerCode,
+    )
+
+    return result
   })
 }
 
@@ -605,5 +832,25 @@ export function getTodayHistory(forceRefresh = false) {
     writeTodayHistoryCache(normalizedHistory)
 
     return normalizedHistory
+  })
+}
+
+export function getTodayActiveCustomers(forceRefresh = false) {
+  if (!forceRefresh) {
+    const cached = readTodayActiveCustomersCache()
+
+    if (cached) {
+      return Promise.resolve(cached)
+    }
+  }
+
+  return apiGet('getTodayActiveCustomers').then((customers) => {
+    const normalizedCustomers = Array.isArray(customers)
+      ? customers
+      : []
+
+    writeTodayActiveCustomersCache(normalizedCustomers)
+
+    return normalizedCustomers
   })
 }

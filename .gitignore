@@ -12,7 +12,10 @@ node_modules
 dist
 dist-ssr
 coverage
+.wrangler
 *.local
+.dev.vars
+.dev.vars.*
 
 # Editor directories and files
 .vscode/*

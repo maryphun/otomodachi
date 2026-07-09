@@ -10,6 +10,9 @@ import { useRouter } from 'vue-router'
 import {
   getTodayHistory,
 } from '../services/api'
+import {
+  displayCustomerName,
+} from '../utils/customerNames'
 
 const router = useRouter()
 
@@ -504,7 +507,7 @@ onMounted(() => {
 
           <span class="transaction-info">
             <strong class="customer-name">
-              {{ transaction.customerName }}
+              {{ displayCustomerName(transaction.customerName) }}
               <span class="name-suffix">さん</span>
             </strong>
 

@@ -6,6 +6,10 @@ import {
   getAllCustomers,
   getCachedCustomers,
 } from '../services/api'
+import codeSearchBackground from '../assets/code-search-background.jpg'
+import {
+  displayCustomerName,
+} from '../utils/customerNames'
 
 const router = useRouter()
 
@@ -270,7 +274,12 @@ onMounted(loadCustomers)
 </script>
 
 <template>
-  <main class="name-search-page">
+  <main
+    class="name-search-page"
+    :style="{
+      '--name-search-background': `url(${codeSearchBackground})`,
+    }"
+  >
     <header class="page-header">
       <button
         type="button"
@@ -323,7 +332,10 @@ onMounted(loadCustomers)
       </div>
     </section>
 
-    <section class="result-section">
+    <section
+      v-if="normalizedSearchText"
+      class="result-section"
+    >
       <div class="result-heading">
         <p class="section-label">
           検索結果
@@ -357,18 +369,6 @@ onMounted(loadCustomers)
         >
           再読み込み
         </button>
-      </div>
-
-      <div
-        v-else-if="!normalizedSearchText"
-        class="empty-card"
-      >
-        <span class="empty-icon">名</span>
-
-        <p>
-          名前を入力すると<br />
-          候補がここに表示されますよん～
-        </p>
       </div>
 
       <div
@@ -409,7 +409,7 @@ onMounted(loadCustomers)
 
           <span class="suggestion-info">
             <span class="suggestion-name">
-              {{ customer.customerName }}
+              {{ displayCustomerName(customer.customerName) }}
               <span class="name-suffix">さん</span>
             </span>
 
@@ -442,10 +442,40 @@ onMounted(loadCustomers)
 
 <style scoped>
 .name-search-page {
+  position: relative;
+
   width: min(100%, 760px);
   min-height: 100vh;
   margin: 0 auto;
   padding: 20px 16px 50px;
+}
+
+.name-search-page::before {
+  content: '';
+
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  z-index: 0;
+  width: min(100vw, 760px);
+  height: 100vh;
+  transform: translateX(-50%);
+
+  background-image: var(--name-search-background);
+  background-repeat: no-repeat;
+  background-size: auto;
+  background-position: right bottom;
+
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.page-header,
+.search-card,
+.result-section {
+  position: relative;
+  z-index: 1;
 }
 
 .page-header {
@@ -523,11 +553,15 @@ h1 {
 .search-card {
   padding: 22px;
 
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  background: rgb(255 255 255 / 82%);
+  border: 1px solid rgb(255 255 255 / 58%);
   border-radius: 26px;
 
-  box-shadow: var(--shadow-card);
+  box-shadow:
+    0 10px 28px rgb(15 34 53 / 12%),
+    inset 0 1px 0 rgb(255 255 255 / 52%);
+
+  backdrop-filter: blur(10px);
 }
 
 .search-label {
@@ -548,7 +582,7 @@ h1 {
   min-height: 68px;
   padding: 8px 10px 8px 16px;
 
-  background: #f7f9fb;
+  background: rgb(247 249 251 / 76%);
   border: 2px solid transparent;
   border-radius: 20px;
 
@@ -559,7 +593,7 @@ h1 {
 }
 
 .search-input-wrapper:focus-within {
-  background: white;
+  background: rgb(255 255 255 / 86%);
   border-color: rgb(23 50 77 / 28%);
 
   box-shadow:
@@ -653,9 +687,10 @@ h1 {
 .section-label {
   margin: 0;
 
-  color: var(--color-muted);
+  color: var(--color-primary);
   font-size: 13px;
-  font-weight: 750;
+  font-weight: 900;
+  text-shadow: 0 1px 0 rgb(255 255 255 / 58%);
 }
 
 .result-count {
@@ -699,13 +734,15 @@ h1 {
   color: var(--color-text);
   text-align: left;
 
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  background: rgb(255 255 255 / 82%);
+  border: 1px solid rgb(255 255 255 / 58%);
   border-radius: 22px;
 
   box-shadow:
-    0 4px 10px rgb(15 34 53 / 4%),
-    0 10px 24px rgb(15 34 53 / 5%);
+    0 7px 18px rgb(15 34 53 / 8%),
+    inset 0 1px 0 rgb(255 255 255 / 52%);
+
+  backdrop-filter: blur(10px);
 
   cursor: pointer;
 
@@ -811,11 +848,15 @@ h1 {
   color: var(--color-muted);
   text-align: center;
 
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  background: rgb(255 255 255 / 82%);
+  border: 1px solid rgb(255 255 255 / 58%);
   border-radius: 22px;
 
-  box-shadow: var(--shadow-card);
+  box-shadow:
+    0 10px 28px rgb(15 34 53 / 12%),
+    inset 0 1px 0 rgb(255 255 255 / 52%);
+
+  backdrop-filter: blur(10px);
 }
 
 .state-card p,

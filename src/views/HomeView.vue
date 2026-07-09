@@ -3,9 +3,16 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   getAllCustomers,
+  getTodayActiveCustomers,
   getTodayHistory,
 } from '../services/api'
 import homeBackground from '../assets/home-background.jpg'
+import activeCustomersIcon from '../assets/home-active-customers-icon.png'
+import codeSearchIcon from '../assets/home-code-search-icon.png'
+import nameSearchIcon from '../assets/home-name-search-icon.png'
+import newCustomerIcon from '../assets/home-new-customer-icon.png'
+import recentCustomersIcon from '../assets/home-recent-customers-icon.png'
+import todayHistoryIcon from '../assets/home-today-history-icon.png'
 
 import {
   APP_UPDATE_DATE,
@@ -49,31 +56,42 @@ const menuItems = [
     description: 'おともだちコードから検索',
     route: '/code-search',
     symbol: '#',
+    iconImage: codeSearchIcon,
   },
   {
     title: '名前で検索',
     description: '名前から検索',
     route: '/search/name',
     symbol: '名',
+    iconImage: nameSearchIcon,
   },
   {
     title: '新規登録',
     description: '新しいおともだち！！！',
     route: '/new-customer',
     symbol: '+',
+    iconImage: newCustomerIcon,
   },
   {
     title: '常連さん',
     description: '最近来店したおともだち',
     route: '/recent-customers',
     symbol: '常',
+    iconImage: recentCustomersIcon,
+  },
+  {
+    title: '来店中リスト',
+    description: '遊んでるおともだち',
+    route: '/today-active-customers',
+    symbol: '店',
+    iconImage: activeCustomersIcon,
   },
   {
     title: '本日の増減履歴',
     description: '今日のうにょ増減を確認',
     route: '/today-history',
     symbol: '履',
-    wide: true,
+    iconImage: todayHistoryIcon,
   },
 ]
 
@@ -93,6 +111,12 @@ function prefetchPage(route) {
 
   if (route === '/today-history') {
     getTodayHistory().catch((error) => {
+      console.error(error)
+    })
+  }
+
+  if (route === '/today-active-customers') {
+    getTodayActiveCustomers().catch((error) => {
       console.error(error)
     })
   }
@@ -116,6 +140,10 @@ function warmAppData() {
     })
 
     getTodayHistory().catch((error) => {
+      console.error(error)
+    })
+
+    getTodayActiveCustomers().catch((error) => {
       console.error(error)
     })
   })
@@ -215,8 +243,22 @@ onMounted(warmAppData)
           @touchstart.passive="prefetchPage(item.route)"
           @click="openPage(item.route)"
         >
-          <span class="menu-symbol">
-            {{ item.symbol }}
+          <span
+            class="menu-symbol"
+            :class="{
+              'menu-symbol--image': item.iconImage,
+            }"
+          >
+            <img
+              v-if="item.iconImage"
+              :src="item.iconImage"
+              alt=""
+              class="menu-symbol-image"
+            />
+
+            <template v-else>
+              {{ item.symbol }}
+            </template>
           </span>
 
           <span class="menu-copy">
@@ -409,6 +451,8 @@ h1 {
   width: 54px;
   height: 54px;
 
+  overflow: hidden;
+
   color: var(--color-primary);
   background: var(--color-primary-soft);
 
@@ -423,6 +467,18 @@ h1 {
     0 4px 10px rgb(23 50 77 / 5%);
 
   transition: transform 260ms var(--ease-spring);
+}
+
+.menu-symbol--image {
+  background: var(--color-primary);
+}
+
+.menu-symbol-image {
+  width: 100%;
+  height: 100%;
+
+  object-fit: cover;
+  object-position: center;
 }
 
 .menu-card:hover .menu-symbol {

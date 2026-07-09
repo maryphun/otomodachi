@@ -7,6 +7,10 @@ import {
   clearRecentCustomers,
   getRecentCustomers,
 } from '../services/recentCustomers'
+import recentCustomersBackground from '../assets/recent-customers-background.jpg'
+import {
+  displayCustomerName,
+} from '../utils/customerNames'
 
 const router = useRouter()
 
@@ -69,7 +73,12 @@ onMounted(loadRecentCustomers)
 </script>
 
 <template>
-  <main class="recent-page">
+  <main
+    class="recent-page"
+    :style="{
+      '--recent-background': `url(${recentCustomersBackground})`,
+    }"
+  >
     <header class="page-header">
       <button
         type="button"
@@ -153,7 +162,7 @@ onMounted(loadRecentCustomers)
 
           <span class="customer-info">
             <strong class="customer-name">
-              {{ customer.customerName }}
+              {{ displayCustomerName(customer.customerName) }}
               <span class="name-suffix">さん</span>
             </strong>
 
@@ -206,10 +215,42 @@ onMounted(loadRecentCustomers)
 
 <style scoped>
 .recent-page {
+  position: relative;
+
   width: min(100%, 760px);
   min-height: 100vh;
   margin: 0 auto;
   padding: 20px 16px 50px;
+}
+
+.recent-page::before {
+  content: '';
+
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  z-index: 0;
+  width: min(100vw, 760px);
+  height: 100vh;
+  transform: translateX(-50%);
+
+  background-image: var(--recent-background);
+  background-repeat: no-repeat;
+  background-size: auto;
+  background-position: right bottom;
+
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.page-header,
+.page-intro,
+.customer-list,
+.empty-card,
+.clear-history-button {
+  position: relative;
+  z-index: 1;
 }
 
 .page-header {
@@ -290,11 +331,15 @@ h1 {
   margin-bottom: 18px;
   padding: 20px;
 
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  background: rgb(255 255 255 / 82%);
+  border: 1px solid rgb(255 255 255 / 58%);
   border-radius: 24px;
 
-  box-shadow: var(--shadow-card);
+  box-shadow:
+    0 10px 28px rgb(15 34 53 / 12%),
+    inset 0 1px 0 rgb(255 255 255 / 52%);
+
+  backdrop-filter: blur(10px);
 }
 
 .page-intro strong {
@@ -351,13 +396,15 @@ h1 {
   color: var(--color-text);
   text-align: left;
 
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  background: rgb(255 255 255 / 82%);
+  border: 1px solid rgb(255 255 255 / 58%);
   border-radius: 22px;
 
   box-shadow:
-    0 4px 10px rgb(15 34 53 / 4%),
-    0 10px 24px rgb(15 34 53 / 5%);
+    0 7px 18px rgb(15 34 53 / 8%),
+    inset 0 1px 0 rgb(255 255 255 / 52%);
+
+  backdrop-filter: blur(10px);
 
   cursor: pointer;
 
@@ -469,11 +516,15 @@ h1 {
   color: var(--color-muted);
   text-align: center;
 
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  background: rgb(255 255 255 / 82%);
+  border: 1px solid rgb(255 255 255 / 58%);
   border-radius: 24px;
 
-  box-shadow: var(--shadow-card);
+  box-shadow:
+    0 10px 28px rgb(15 34 53 / 12%),
+    inset 0 1px 0 rgb(255 255 255 / 52%);
+
+  backdrop-filter: blur(10px);
 }
 
 .empty-card h2,

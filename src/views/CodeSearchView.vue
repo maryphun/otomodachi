@@ -5,6 +5,10 @@ import {
   getAllCustomers,
   getCachedCustomers,
 } from '../services/api'
+import codeSearchBackground from '../assets/code-search-background.jpg'
+import {
+  displayCustomerName,
+} from '../utils/customerNames'
 
 const router = useRouter()
 
@@ -107,7 +111,12 @@ onMounted(loadCustomers)
 </script>
 
 <template>
-  <main class="code-search-page">
+  <main
+    class="code-search-page"
+    :style="{
+      '--code-search-background': `url(${codeSearchBackground})`,
+    }"
+  >
     <header class="page-header">
       <button
         type="button"
@@ -256,7 +265,7 @@ onMounted(loadCustomers)
 
             <span class="suggestion-info">
               <strong class="friend-name">
-                {{ customer.customerName }}
+                {{ displayCustomerName(customer.customerName) }}
                 <span class="name-suffix">さん</span>
               </strong>
 
@@ -287,10 +296,39 @@ onMounted(loadCustomers)
 
 <style scoped>
 .code-search-page {
+  position: relative;
+
   width: min(100%, 1000px);
   min-height: 100vh;
   margin: 0 auto;
   padding: 20px 16px 40px;
+}
+
+.code-search-page::before {
+  content: '';
+
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  z-index: 0;
+  width: min(100vw, 1000px);
+  height: 100vh;
+  transform: translateX(-50%);
+
+  background-image: var(--code-search-background);
+  background-repeat: no-repeat;
+  background-size: auto;
+  background-position: right bottom;
+
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.page-header,
+.search-layout {
+  position: relative;
+  z-index: 1;
 }
 
 .page-header {
@@ -360,18 +398,22 @@ h1 {
 .suggestions-panel {
   padding: 18px;
 
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  background: rgb(255 255 255 / 82%);
+  border: 1px solid rgb(255 255 255 / 58%);
   border-radius: 24px;
 
-  box-shadow: var(--shadow-card);
+  box-shadow:
+    0 10px 28px rgb(15 34 53 / 12%),
+    inset 0 1px 0 rgb(255 255 255 / 52%);
+
+  backdrop-filter: blur(10px);
 }
 
 .code-display {
   position: relative;
   padding: 18px;
 
-  background: var(--color-primary-soft);
+  background: rgb(235 244 252 / 78%);
   border-radius: 18px;
 }
 
@@ -395,7 +437,7 @@ h1 {
   overflow-x: auto;
 
   color: var(--color-primary);
-  background: white;
+  background: rgb(255 255 255 / 82%);
   border: 2px solid var(--color-primary);
   border-radius: 16px;
 
@@ -440,6 +482,7 @@ h1 {
 
   color: var(--color-text);
   background: linear-gradient(180deg, #ffffff, #f5f8fa);
+  background-color: rgb(255 255 255 / 84%);
 
   border: 1px solid rgb(23 50 77 / 12%);
   border-radius: 18px;
@@ -474,7 +517,7 @@ h1 {
 
 .number-button--utility {
   color: var(--color-primary);
-  background: var(--color-primary-soft);
+  background: rgb(231 242 251 / 86%);
 }
 
 .suggestions-header {
@@ -526,8 +569,8 @@ h1 {
   color: var(--color-text);
   text-align: left;
 
-  background: #fafbfd;
-  border: 1px solid var(--color-border);
+  background: rgb(250 251 253 / 82%);
+  border: 1px solid rgb(23 50 77 / 10%);
   border-radius: 17px;
 
   box-shadow: 0 4px 12px rgb(15 34 53 / 5%);

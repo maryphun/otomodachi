@@ -9,6 +9,9 @@ import {
 import {
   recordRecentCustomer,
 } from '../services/recentCustomers'
+import {
+  displayCustomerName,
+} from '../utils/customerNames'
 
 const router = useRouter()
 
@@ -127,7 +130,7 @@ async function submitCustomer() {
 
   const confirmed = window.confirm(
     [
-      `お名前：${normalizedName.value}さん`,
+      `お名前：${displayCustomerName(normalizedName.value)}さん`,
       `初期うにょ：${formatNumber(initialBalance.value)}`,
       '',
       'この内容で登録しますか？',
@@ -351,7 +354,7 @@ async function submitCustomer() {
 
           <strong>
             <template v-if="normalizedName">
-              {{ normalizedName }}
+              {{ displayCustomerName(normalizedName) }}
               <span class="name-suffix">さん</span>
             </template>
 

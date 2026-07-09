@@ -126,6 +126,9 @@ function dispatch_(action, parameters) {
     case 'getTodayHistory':
       return getTodayHistory_();
 
+    case 'getTodayActiveCustomers':
+      return getTodayActiveCustomers_();
+
     case 'addTransaction':
       return addTransaction_(
         parameters.customerCode,
@@ -420,6 +423,13 @@ function getTodayHistory_() {
   return readDailyMovementRows_(sheet, dateText);
 }
 
+function getTodayActiveCustomers_() {
+  const sheet = getOrCreateTodaySheet_();
+  const dateText = getTodaySheetName_();
+
+  return readDailyActiveCustomerRows_(sheet, dateText);
+}
+
 // 💰 うにょの増減を今日のシートに記入
 function addTransaction_(customerCode, chipChange) {
   const lock = LockService.getScriptLock();
@@ -437,17 +447,20 @@ function addTransaction_(customerCode, chipChange) {
       throw new Error('うにょ数が正しくありません');
     }
 
-    const customer = getCustomerFromMaster_(code);
+    const masterRecord = getCustomerMasterRecord_(code);
+    const customer = masterRecord.customer;
     const sheet = getOrCreateTodaySheet_();
     refreshDailyColumns_(sheet);
 
-    const existingDailyRow = findDailyCustomerRow_(
+    const dailyRowLookup = findDailyCustomerRowOrFirstEmpty_(
       sheet,
       customer.customerCode,
     );
-    const rowNumber =
-      existingDailyRow ||
-      getOrCreateDailyCustomerRow_(sheet, customer);
+    const rowNumber = getOrCreateDailyCustomerRow_(
+      sheet,
+      customer,
+      dailyRowLookup,
+    );
 
     const rowRange = sheet.getRange(
       rowNumber,
@@ -475,22 +488,15 @@ function addTransaction_(customerCode, chipChange) {
       );
     }
 
-    writeDailyMovement_(sheet, rowNumber, change);
-
-    SpreadsheetApp.flush();
-
-    const updatedValues = rowRange.getValues()[0];
-    const updatedDisplayValues =
-      rowRange.getDisplayValues()[0];
-    let confirmedBalance = getDailyBalanceFromRow_(
-      updatedValues,
-      updatedDisplayValues,
-      balanceBefore,
+    writeDailyMovement_(
+      sheet,
+      rowNumber,
+      change,
+      values,
+      displayValues,
     );
 
-    if (!Number.isFinite(confirmedBalance)) {
-      confirmedBalance = nextBalance;
-    }
+    const confirmedBalance = nextBalance;
 
     writeDailyConfirmedBalance_(
       sheet,
@@ -504,6 +510,8 @@ function addTransaction_(customerCode, chipChange) {
       customer.customerCode,
       todayDate,
       extractDateText_(previousLastVisit) !== todayDate,
+      masterRecord.rowNumber,
+      customer.visitCount,
     );
 
     appendChangeLog_(
@@ -548,17 +556,20 @@ function checkoutCustomer_(customerCode, endingAmount) {
       throw new Error('退店時のうにょ数が正しくありません');
     }
 
-    const customer = getCustomerFromMaster_(code);
+    const masterRecord = getCustomerMasterRecord_(code);
+    const customer = masterRecord.customer;
     const sheet = getOrCreateTodaySheet_();
     refreshDailyColumns_(sheet);
 
-    const existingDailyRow = findDailyCustomerRow_(
+    const dailyRowLookup = findDailyCustomerRowOrFirstEmpty_(
       sheet,
       customer.customerCode,
     );
-    const rowNumber =
-      existingDailyRow ||
-      getOrCreateDailyCustomerRow_(sheet, customer);
+    const rowNumber = getOrCreateDailyCustomerRow_(
+      sheet,
+      customer,
+      dailyRowLookup,
+    );
 
     const rowRange = sheet.getRange(
       rowNumber,
@@ -608,6 +619,8 @@ function checkoutCustomer_(customerCode, endingAmount) {
       customer.customerCode,
       todayDate,
       extractDateText_(previousLastVisit) !== todayDate,
+      masterRecord.rowNumber,
+      customer.visitCount,
     );
 
     appendChangeLog_(
@@ -784,6 +797,62 @@ function getCustomerFromMaster_(customerCode) {
   return customer;
 }
 
+function getCustomerMasterRecord_(customerCode) {
+  const sheet = getCustomerSheet_();
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < WEBAPP_CUSTOMER_START_ROW) {
+    throw new Error(
+      `おともだちが見つかりません: ${customerCode}`,
+    );
+  }
+
+  const codeValues = sheet
+    .getRange(
+      WEBAPP_CUSTOMER_START_ROW,
+      WEBAPP_CUSTOMER_COLUMNS.code,
+      lastRow - WEBAPP_CUSTOMER_START_ROW + 1,
+      1,
+    )
+    .getDisplayValues();
+  let rowNumber = null;
+
+  for (let index = 0; index < codeValues.length; index++) {
+    if (codesMatch_(codeValues[index][0], customerCode)) {
+      rowNumber = WEBAPP_CUSTOMER_START_ROW + index;
+      break;
+    }
+  }
+
+  if (!rowNumber) {
+    throw new Error(
+      `おともだちが見つかりません: ${customerCode}`,
+    );
+  }
+
+  const range = sheet.getRange(
+    rowNumber,
+    1,
+    1,
+    WEBAPP_CUSTOMER_COLUMNS.firstVisit,
+  );
+  const customer = customerRowToObject_(
+    range.getValues()[0],
+    range.getDisplayValues()[0],
+  );
+
+  if (!customer) {
+    throw new Error(
+      `おともだちが見つかりません: ${customerCode}`,
+    );
+  }
+
+  return {
+    customer,
+    rowNumber,
+  };
+}
+
 function findCustomerMasterRow_(customerCode) {
   const sheet = getCustomerSheet_();
   const lastRow = sheet.getLastRow();
@@ -814,22 +883,31 @@ function updateCustomerVisitInfo_(
   customerCode,
   todayDate,
   shouldIncrementVisitCount,
+  knownRowNumber,
+  knownVisitCount,
 ) {
   const sheet = getCustomerSheet_();
-  const rowNumber = findCustomerMasterRow_(customerCode);
+  const rowNumber =
+    knownRowNumber || findCustomerMasterRow_(customerCode);
 
   if (!rowNumber) {
     return null;
   }
 
-  const visitCountCell = sheet.getRange(
-    rowNumber,
-    WEBAPP_CUSTOMER_COLUMNS.visitCount,
-  );
-  const currentVisitCount = numberFromCell_(
-    visitCountCell.getValue(),
-    visitCountCell.getDisplayValue(),
-  );
+  let currentVisitCount = Number(knownVisitCount);
+
+  if (!Number.isFinite(currentVisitCount)) {
+    const visitCountCell = sheet.getRange(
+      rowNumber,
+      WEBAPP_CUSTOMER_COLUMNS.visitCount,
+    );
+
+    currentVisitCount = numberFromCell_(
+      visitCountCell.getValue(),
+      visitCountCell.getDisplayValue(),
+    );
+  }
+
   const nextVisitCount =
     (Number.isFinite(currentVisitCount)
       ? currentVisitCount
@@ -838,7 +916,9 @@ function updateCustomerVisitInfo_(
   sheet
     .getRange(rowNumber, WEBAPP_CUSTOMER_COLUMNS.lastVisit)
     .setValue(todayDate.replaceAll('-', '/'));
-  visitCountCell.setValue(nextVisitCount);
+  sheet
+    .getRange(rowNumber, WEBAPP_CUSTOMER_COLUMNS.visitCount)
+    .setValue(nextVisitCount);
 
   return nextVisitCount;
 }
@@ -856,7 +936,8 @@ function appendChangeLog_(
     return;
   }
 
-  getChangeLogSheet_().appendRow([
+  const sheet = getChangeLogSheet_();
+  const row = [
     todayDate.replaceAll('-', '/'),
     Number(stripLeadingZeroes_(customer.customerCode)),
     customer.customerName,
@@ -865,7 +946,16 @@ function appendChangeLog_(
     balanceBefore,
     balanceAfter,
     chipChange,
-  ]);
+  ];
+
+  sheet
+    .getRange(
+      sheet.getLastRow() + 1,
+      1,
+      1,
+      WEBAPP_CHANGE_LOG_COLUMNS.chipChange,
+    )
+    .setValues([row]);
 }
 
 // 📄 今日のシートを作成（既存なら表示状態にする）
@@ -875,10 +965,10 @@ function getOrCreateTodaySheet_() {
   const existing = spreadsheet.getSheetByName(todayName);
 
   if (existing) {
-    existing.showSheet();
+    if (existing.isSheetHidden && existing.isSheetHidden()) {
+      existing.showSheet();
+    }
     refreshDailyColumns_(existing);
-    refreshDailySheetDate_(existing, todayName);
-    clearLegacyRightSideColumns_(existing);
     console.log('今日のシートは既に存在:', todayName);
     return existing;
   }
@@ -1024,47 +1114,60 @@ function getLatestDailySheet_() {
   return dailySheets.length ? dailySheets[0].sheet : null;
 }
 
-function getOrCreateDailyCustomerRow_(sheet, customer) {
+function getOrCreateDailyCustomerRow_(
+  sheet,
+  customer,
+  dailyRowLookup,
+) {
   refreshDailyColumns_(sheet);
 
-  const existingRow = findDailyCustomerRow_(
-    sheet,
-    customer.customerCode,
-  );
+  const lookup =
+    dailyRowLookup ||
+    findDailyCustomerRowOrFirstEmpty_(
+      sheet,
+      customer.customerCode,
+    );
+  const existingRow = lookup.existingRow;
 
   if (existingRow) {
     return existingRow;
   }
 
-  const rowNumber = findFirstEmptyDailyRow_(sheet);
+  const rowNumber = lookup.emptyRow || findFirstEmptyDailyRow_(sheet);
   const rowIndex = rowNumber - WEBAPP_DAILY_START_ROW + 1;
 
-  sheet.getRange(rowNumber, WEBAPP_DAILY_COLUMNS.no).setValue(rowIndex);
   sheet
-    .getRange(rowNumber, WEBAPP_DAILY_COLUMNS.code)
-    .setValue(customer.customerCode);
-  sheet
-    .getRange(rowNumber, WEBAPP_DAILY_COLUMNS.lastVisit)
-    .setValue(customer.lastVisit);
-  sheet
-    .getRange(rowNumber, WEBAPP_DAILY_COLUMNS.name)
-    .setValue(customer.customerName);
-  sheet
-    .getRange(rowNumber, WEBAPP_DAILY_COLUMNS.balanceBefore)
-    .setValue(customer.currentBalance);
-  sheet
-    .getRange(rowNumber, WEBAPP_DAILY_COLUMNS.withdrawable)
-    .setValue(customer.currentBalance);
+    .getRange(
+      rowNumber,
+      WEBAPP_DAILY_COLUMNS.no,
+      1,
+      WEBAPP_DAILY_COLUMNS.withdrawable -
+        WEBAPP_DAILY_COLUMNS.no +
+        1,
+    )
+    .setValues([[
+      rowIndex,
+      customer.customerCode,
+      customer.lastVisit,
+      customer.customerName,
+      customer.currentBalance,
+      customer.currentBalance,
+    ]]);
 
   sheet
-    .getRange(rowNumber, WEBAPP_DAILY_COLUMNS.nameMirror)
-    .setValue(customer.customerName);
-  sheet
-    .getRange(rowNumber, WEBAPP_DAILY_COLUMNS.codeMirror)
-    .setValue(customer.customerCode);
-  sheet
-    .getRange(rowNumber, WEBAPP_DAILY_COLUMNS.noMirror)
-    .setValue(rowIndex);
+    .getRange(
+      rowNumber,
+      WEBAPP_DAILY_COLUMNS.nameMirror,
+      1,
+      WEBAPP_DAILY_COLUMNS.noMirror -
+        WEBAPP_DAILY_COLUMNS.nameMirror +
+        1,
+    )
+    .setValues([[
+      customer.customerName,
+      customer.customerCode,
+      rowIndex,
+    ]]);
 
   return rowNumber;
 }
@@ -1109,6 +1212,42 @@ function findDailyCustomerRow_(sheet, customerCode) {
   return null;
 }
 
+function findDailyCustomerRowOrFirstEmpty_(sheet, customerCode) {
+  refreshDailyColumns_(sheet);
+
+  const lastRow = Math.max(sheet.getLastRow(), WEBAPP_DAILY_START_ROW);
+  const values = sheet
+    .getRange(
+      WEBAPP_DAILY_START_ROW,
+      WEBAPP_DAILY_COLUMNS.code,
+      lastRow - WEBAPP_DAILY_START_ROW + 1,
+      1,
+    )
+    .getDisplayValues();
+  let emptyRow = null;
+
+  for (let index = 0; index < values.length; index++) {
+    const rowNumber = WEBAPP_DAILY_START_ROW + index;
+    const code = values[index][0];
+
+    if (codesMatch_(code, customerCode)) {
+      return {
+        existingRow: rowNumber,
+        emptyRow,
+      };
+    }
+
+    if (!emptyRow && !String(code || '').trim()) {
+      emptyRow = rowNumber;
+    }
+  }
+
+  return {
+    existingRow: null,
+    emptyRow: emptyRow || lastRow + 1,
+  };
+}
+
 function findFirstEmptyDailyRow_(sheet) {
   refreshDailyColumns_(sheet);
 
@@ -1132,11 +1271,34 @@ function findFirstEmptyDailyRow_(sheet) {
 }
 
 // 入出金をシートに書く。最初の引き出しだけG列、それ以降は横へ
-function writeDailyMovement_(sheet, rowNumber, change) {
+function writeDailyMovement_(
+  sheet,
+  rowNumber,
+  change,
+  rowValues,
+  rowDisplayValues,
+) {
   refreshDailyColumns_(sheet);
 
   const isWithdrawal = change < 0;
   const amount = Math.abs(change);
+  const movementCell = getDailyMovementCell_(
+    rowValues,
+    rowDisplayValues,
+    change,
+  );
+
+  if (movementCell) {
+    const targetCell = sheet.getRange(
+      rowNumber,
+      movementCell.column,
+    );
+
+    targetCell
+      .setValue(movementCell.value)
+      .setFontColor(movementCell.fontColor);
+    return;
+  }
 
   if (isWithdrawal) {
     const initialCell = sheet.getRange(
@@ -1164,6 +1326,61 @@ function writeDailyMovement_(sheet, rowNumber, change) {
 
   targetCell.setValue(amount);
   targetCell.setFontColor('#000000');
+}
+
+function getDailyMovementCell_(
+  row,
+  displayRow,
+  change,
+) {
+  if (!row || !displayRow) {
+    return null;
+  }
+
+  const isWithdrawal = change < 0;
+  const amount = Math.abs(change);
+
+  if (isWithdrawal) {
+    const initialText = String(
+      displayRow[WEBAPP_DAILY_COLUMNS.initialWithdrawal - 1] ||
+        row[WEBAPP_DAILY_COLUMNS.initialWithdrawal - 1] ||
+        '',
+    ).trim();
+
+    if (!initialText) {
+      return {
+        column: WEBAPP_DAILY_COLUMNS.initialWithdrawal,
+        value: amount,
+        fontColor: '#d00000',
+      };
+    }
+  }
+
+  for (
+    let column = WEBAPP_DAILY_COLUMNS.movementStart;
+    column <= WEBAPP_DAILY_COLUMNS.movementEnd;
+    column++
+  ) {
+    const text = String(
+      displayRow[column - 1] ||
+        row[column - 1] ||
+        '',
+    ).trim();
+
+    if (!text) {
+      return {
+        column,
+        value: isWithdrawal
+          ? `\u25b2${formatNumber_(amount)}`
+          : amount,
+        fontColor: isWithdrawal ? '#d00000' : '#000000',
+      };
+    }
+  }
+
+  throw new Error(
+    'No empty movement cell is available today',
+  );
 }
 
 function findFirstEmptyMovementCell_(sheet, rowNumber) {
@@ -1291,6 +1508,138 @@ function readDailyMovementRows_(sheet, dateText) {
   }
 
   return transactions.reverse();
+}
+
+// 店内一覧用：本日うにょ入力があり、まだ退店していない行だけ返す
+function readDailyActiveCustomerRows_(sheet, dateText) {
+  refreshDailyColumns_(sheet);
+
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < WEBAPP_DAILY_START_ROW) {
+    return [];
+  }
+
+  const height = lastRow - WEBAPP_DAILY_START_ROW + 1;
+  const width = getDailyReadWidth_();
+  const range = sheet.getRange(
+    WEBAPP_DAILY_START_ROW,
+    1,
+    height,
+    width,
+  );
+  const values = range.getValues();
+  const displayValues = range.getDisplayValues();
+  const customers = [];
+
+  for (let index = 0; index < values.length; index++) {
+    const customer = dailyRowToActiveCustomer_(
+      values[index],
+      displayValues[index],
+      dateText,
+      WEBAPP_DAILY_START_ROW + index,
+    );
+
+    if (customer) {
+      customers.push(customer);
+    }
+  }
+
+  return customers;
+}
+
+function dailyRowToActiveCustomer_(
+  row,
+  displayRow,
+  dateText,
+  rowNumber,
+) {
+  const customerCode = normalizeCode_(
+    displayRow[WEBAPP_DAILY_COLUMNS.code - 1] ||
+      row[WEBAPP_DAILY_COLUMNS.code - 1],
+  );
+
+  if (!customerCode) {
+    return null;
+  }
+
+  const endingText = String(
+    displayRow[WEBAPP_DAILY_COLUMNS.endingRemaining - 1] ||
+      row[WEBAPP_DAILY_COLUMNS.endingRemaining - 1] ||
+      '',
+  ).trim();
+
+  if (endingText) {
+    return null;
+  }
+
+  const balanceBefore = numberFromCell_(
+    row[WEBAPP_DAILY_COLUMNS.balanceBefore - 1],
+    displayRow[WEBAPP_DAILY_COLUMNS.balanceBefore - 1],
+  );
+
+  if (!Number.isFinite(balanceBefore)) {
+    return null;
+  }
+
+  let currentBalance = balanceBefore;
+  let movementCount = 0;
+  let lastMovementAmount = 0;
+
+  const addMovement = (amount) => {
+    if (!Number.isFinite(amount) || amount === 0) {
+      return;
+    }
+
+    movementCount++;
+    lastMovementAmount = amount;
+    currentBalance += amount;
+  };
+
+  const initialWithdrawal = numberFromCell_(
+    row[WEBAPP_DAILY_COLUMNS.initialWithdrawal - 1],
+    displayRow[WEBAPP_DAILY_COLUMNS.initialWithdrawal - 1],
+  );
+
+  if (
+    Number.isFinite(initialWithdrawal) &&
+    initialWithdrawal !== 0
+  ) {
+    addMovement(-Math.abs(initialWithdrawal));
+  }
+
+  for (
+    let column = WEBAPP_DAILY_COLUMNS.movementStart;
+    column <= WEBAPP_DAILY_COLUMNS.movementEnd;
+    column++
+  ) {
+    const movement = numberFromCell_(
+      row[column - 1],
+      displayRow[column - 1],
+    );
+
+    addMovement(movement);
+  }
+
+  if (movementCount === 0) {
+    return null;
+  }
+
+  return {
+    customerCode,
+    customerName: String(
+      displayRow[WEBAPP_DAILY_COLUMNS.name - 1] ||
+        row[WEBAPP_DAILY_COLUMNS.name - 1] ||
+        '',
+    ).trim(),
+    date: dateText,
+    rowNumber,
+    balanceBefore,
+    currentBalance,
+    chipChange: currentBalance - balanceBefore,
+    movementCount,
+    lastMovementAmount,
+  };
 }
 
 function dailyRowToMovementTransactions_(
@@ -1649,6 +1998,8 @@ function numberFromCell_(value, displayValue) {
   }
 
   const isNegative =
+    text.includes('\u25b2') ||
+    text.includes('\u25b3') ||
     text.includes('▲') ||
     text.includes('△') ||
     text.startsWith('-');

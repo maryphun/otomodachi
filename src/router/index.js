@@ -6,6 +6,7 @@ import NameSearchView from '../views/NameSearchView.vue'
 import RecentCustomersView from '../views/RecentCustomersView.vue'
 import NewCustomerView from '../views/NewCustomerView.vue'
 import TodayHistoryView from '../views/TodayHistoryView.vue'
+import TodayActiveCustomersView from '../views/TodayActiveCustomersView.vue'
 
 const router = createRouter({
   history: createWebHashHistory(import.meta.env.BASE_URL),
@@ -52,6 +53,11 @@ const router = createRouter({
       path: '/today-history',
       name: 'today-history',
       component: TodayHistoryView,
+    },
+    {
+      path: '/today-active-customers',
+      name: 'today-active-customers',
+      component: TodayActiveCustomersView,
     },
   ],
 })
