@@ -272,7 +272,7 @@ function loginPage_(errorMessage = '') {
       <h1>合言葉</h1>
       <form method="post" action="/auth/login">
         <label for="pin">スタッフ用</label>
-        <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" autofocus>
+        <input id="pin" name="pin" type="password" autocomplete="current-password" autofocus>
         <button type="submit">入る</button>
       </form>
       ${errorMessage ? `<p class="error">${escapeHtml_(errorMessage)}</p>` : ''}

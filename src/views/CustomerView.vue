@@ -566,47 +566,6 @@ function isLastVisitOlderThanThreeMonths(value) {
   return visitDate < threeMonthsAgo
 }
 
-function getTokyoDateString() {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Tokyo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date())
-}
-
-function getDateKey(value) {
-  const text = String(value || '').trim()
-  const match = text.match(
-    /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/,
-  )
-
-  if (!match) {
-    return ''
-  }
-
-  return [
-    match[1],
-    String(Number(match[2])).padStart(2, '0'),
-    String(Number(match[3])).padStart(2, '0'),
-  ].join('-')
-}
-
-function getOptimisticVisitCount(
-  currentVisitCount,
-  shouldIncrement,
-) {
-  const visitCount = Number(currentVisitCount)
-
-  if (!Number.isFinite(visitCount)) {
-    return currentVisitCount
-  }
-
-  return shouldIncrement
-    ? visitCount + 1
-    : currentVisitCount
-}
-
 function getBalanceBefore(transaction) {
   const balanceBefore = Number(
     transaction.balanceBefore,
@@ -730,13 +689,7 @@ async function saveTransaction() {
   const change = transactionChange.value
   const oldBalance = currentBalance.value
   const newBalance = oldBalance + change
-  const originalAction = selectedAction.value
-  const originalAmountText = amountText.value
-  const oldCustomer = { ...customer.value }
   const oldLastVisit = customer.value.lastVisit
-  const todayDate = getTokyoDateString()
-  const shouldIncrementVisitCount =
-    getDateKey(oldLastVisit) !== todayDate
 
   const confirmed = window.confirm(
     [
@@ -758,27 +711,7 @@ async function saveTransaction() {
 
   isSavingTransaction.value = true
   transactionError.value = ''
-
-  customer.value = {
-    ...customer.value,
-    currentBalance: newBalance,
-    lastVisit: todayDate,
-    visitCount: getOptimisticVisitCount(
-      customer.value.visitCount,
-      shouldIncrementVisitCount,
-    ),
-  }
-
-  recordRecentCustomer(customer.value)
-  cacheCustomer(customer.value)
-
-  history.value = []
-  clearCustomerHistoryCache(customerCode.value)
-  clearTodayHistoryCache()
-
-  selectedAction.value = ''
-  amountText.value = ''
-  transactionSuccess.value = ''
+  transactionSuccess.value = '保存しています…'
 
   try {
     const result = isCheckout
@@ -814,18 +747,23 @@ async function saveTransaction() {
     clearCustomerHistoryCache(customerCode.value)
     clearTodayHistoryCache()
 
-    transactionSuccess.value = ''
+    transactionSuccess.value = '保存しました'
+    amountText.value = ''
+
+    window.setTimeout(() => {
+      transactionSuccess.value = ''
+      closeAction()
+    }, 650)
   } catch (error) {
     console.error(error)
 
-    customer.value = oldCustomer
-    recordRecentCustomer(customer.value)
-    cacheCustomer(customer.value)
+    customer.value = {
+      ...customer.value,
+      currentBalance: oldBalance,
+      lastVisit: oldLastVisit,
+    }
 
     transactionSuccess.value = ''
-
-    selectedAction.value = originalAction
-    amountText.value = originalAmountText
 
     transactionError.value =
       error.message || '保存に失敗しました'

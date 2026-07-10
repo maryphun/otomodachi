@@ -475,11 +475,24 @@ function addTransaction_(customerCode, chipChange) {
       values[WEBAPP_DAILY_COLUMNS.balanceBefore - 1],
       displayValues[WEBAPP_DAILY_COLUMNS.balanceBefore - 1],
     );
-    const currentBalance = getDailyBalanceFromRow_(
+    const dailyBalance = getDailyBalanceFromRow_(
       values,
       displayValues,
       balanceBefore,
     );
+    const dailyConfirmedBalance = getDailyConfirmedBalanceFromRow_(
+      values,
+      displayValues,
+    );
+    const masterBalance = numberFromCell_(
+      customer.currentBalance,
+      customer.currentBalance,
+    );
+    const currentBalance = Number.isFinite(dailyConfirmedBalance)
+      ? dailyConfirmedBalance
+      : Number.isFinite(masterBalance)
+        ? masterBalance
+        : dailyBalance;
     const nextBalance = currentBalance + change;
 
     if (nextBalance < 0) {
@@ -506,12 +519,12 @@ function addTransaction_(customerCode, chipChange) {
 
     const todayDate = getTodaySheetName_();
     const previousLastVisit = customer.lastVisit;
-    const updatedVisitCount = updateCustomerVisitInfo_(
-      customer.customerCode,
+    const updatedVisitCount = syncCustomerMasterAfterTransaction_(
+      masterRecord.rowNumber,
       todayDate,
       extractDateText_(previousLastVisit) !== todayDate,
-      masterRecord.rowNumber,
       customer.visitCount,
+      confirmedBalance,
     );
 
     appendChangeLog_(
@@ -583,11 +596,24 @@ function checkoutCustomer_(customerCode, endingAmount) {
       values[WEBAPP_DAILY_COLUMNS.balanceBefore - 1],
       displayValues[WEBAPP_DAILY_COLUMNS.balanceBefore - 1],
     );
-    const currentBalance = getDailyBalanceFromRow_(
+    const dailyBalance = getDailyBalanceFromRow_(
       values,
       displayValues,
       balanceBefore,
     );
+    const dailyConfirmedBalance = getDailyConfirmedBalanceFromRow_(
+      values,
+      displayValues,
+    );
+    const masterBalance = numberFromCell_(
+      customer.currentBalance,
+      customer.currentBalance,
+    );
+    const currentBalance = Number.isFinite(dailyConfirmedBalance)
+      ? dailyConfirmedBalance
+      : Number.isFinite(masterBalance)
+        ? masterBalance
+        : dailyBalance;
     const previousEndingAmount = getDailyEndingAmountFromRow_(
       values,
       displayValues,
@@ -615,12 +641,12 @@ function checkoutCustomer_(customerCode, endingAmount) {
 
     const todayDate = getTodaySheetName_();
     const previousLastVisit = customer.lastVisit;
-    const updatedVisitCount = updateCustomerVisitInfo_(
-      customer.customerCode,
+    const updatedVisitCount = syncCustomerMasterAfterTransaction_(
+      masterRecord.rowNumber,
       todayDate,
       extractDateText_(previousLastVisit) !== todayDate,
-      masterRecord.rowNumber,
       customer.visitCount,
+      confirmedBalance,
     );
 
     appendChangeLog_(
@@ -879,20 +905,30 @@ function findCustomerMasterRow_(customerCode) {
   return null;
 }
 
-function updateCustomerVisitInfo_(
-  customerCode,
+function syncCustomerMasterAfterTransaction_(
+  rowNumber,
   todayDate,
   shouldIncrementVisitCount,
-  knownRowNumber,
   knownVisitCount,
+  confirmedBalance,
 ) {
-  const sheet = getCustomerSheet_();
-  const rowNumber =
-    knownRowNumber || findCustomerMasterRow_(customerCode);
-
   if (!rowNumber) {
     return null;
   }
+
+  const sheet = getCustomerSheet_();
+  const formattedToday = todayDate.replaceAll('-', '/');
+
+  // 台帳側の残高もWebアプリの確定残高に合わせる
+  if (Number.isFinite(confirmedBalance)) {
+    sheet
+      .getRange(rowNumber, WEBAPP_CUSTOMER_COLUMNS.balance)
+      .setValue(confirmedBalance);
+  }
+
+  sheet
+    .getRange(rowNumber, WEBAPP_CUSTOMER_COLUMNS.lastVisit)
+    .setValue(formattedToday);
 
   let currentVisitCount = Number(knownVisitCount);
 
@@ -914,13 +950,31 @@ function updateCustomerVisitInfo_(
       : 0) + (shouldIncrementVisitCount ? 1 : 0);
 
   sheet
-    .getRange(rowNumber, WEBAPP_CUSTOMER_COLUMNS.lastVisit)
-    .setValue(todayDate.replaceAll('-', '/'));
-  sheet
     .getRange(rowNumber, WEBAPP_CUSTOMER_COLUMNS.visitCount)
     .setValue(nextVisitCount);
 
   return nextVisitCount;
+}
+
+function updateCustomerVisitInfo_(
+  customerCode,
+  todayDate,
+  shouldIncrementVisitCount,
+  knownRowNumber,
+  knownVisitCount,
+  confirmedBalance,
+) {
+  const sheet = getCustomerSheet_();
+  const rowNumber =
+    knownRowNumber || findCustomerMasterRow_(customerCode);
+
+  return syncCustomerMasterAfterTransaction_(
+    rowNumber,
+    todayDate,
+    shouldIncrementVisitCount,
+    knownVisitCount,
+    confirmedBalance,
+  );
 }
 
 function appendChangeLog_(
@@ -1789,6 +1843,26 @@ function dailyRowToTransaction_(
     balanceBefore,
     balanceAfter,
   };
+}
+
+function getDailyConfirmedBalanceFromRow_(row, displayRow) {
+  const balanceAfter = numberFromCell_(
+    row[WEBAPP_DAILY_COLUMNS.balanceAfter - 1],
+    displayRow[WEBAPP_DAILY_COLUMNS.balanceAfter - 1],
+  );
+
+  if (Number.isFinite(balanceAfter)) {
+    return balanceAfter;
+  }
+
+  const withdrawable = numberFromCell_(
+    row[WEBAPP_DAILY_COLUMNS.withdrawable - 1],
+    displayRow[WEBAPP_DAILY_COLUMNS.withdrawable - 1],
+  );
+
+  return Number.isFinite(withdrawable)
+    ? withdrawable
+    : NaN;
 }
 
 function getDailyBalanceFromRow_(
