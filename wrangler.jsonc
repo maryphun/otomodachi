@@ -3,7 +3,7 @@
   "compatibility_date": "2026-07-03",
   "main": "./src/worker.js",
   "vars": {
-    "APPS_SCRIPT_URL": "https://script.google.com/macros/s/AKfycbwFWPM0q_BzYruL5TBs7JiTH6XgBlJxrQYmcraZG-WRXvj_THtXW-KAboe5lqXNwGuN/exec"
+    "APPS_SCRIPT_URL": "https://script.google.com/macros/s/AKfycby8bn6bIhS9bDRxjHJUaCeUEeaqwWP4bfsyMkHnD1xXM1hnB83-4uUw7JJqarbAVtN_EA/exec"
   },
   "assets": {
     "directory": "./dist/",

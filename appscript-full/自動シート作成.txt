@@ -1,0 +1,78 @@
+// 📅 毎日のセットアップ関数（1日1回・時間主導トリガーで実行）
+function runDailySetup() {
+  const todayStr = getTodayString();  // ← 共通化
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const allNames = ss.getSheets().map(s => s.getName());
+
+  console.log("=== runDailySetup 実行開始 ===");
+  console.log("todayStr:", todayStr);
+  console.log("シート名一覧:", JSON.stringify(allNames));
+
+  // 先に古いシートを非表示
+  hideOldSheets(todayStr);
+
+  // その後 今日のシートを作成（または表示）
+  createTodaySheet(todayStr);
+
+  console.log("=== runDailySetup 実行終了 ===");
+}
+
+// 📄 今日のシートを作成（既存なら表示状態にする）
+function createTodaySheet(todayStr) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const templateSheet = ss.getSheetByName("テンプレート");
+  if (!templateSheet) {
+    SpreadsheetApp.getUi().alert("テンプレートシートが見つかりません。");
+    return;
+  }
+
+  let todaySheet = ss.getSheetByName(todayStr);
+  if (!todaySheet) {
+    const newSheet = templateSheet.copyTo(ss);
+    newSheet.setName(todayStr);
+    newSheet.showSheet(); // ← 念のため表示状態に
+    console.log("作成シート名:", todayStr);
+    newSheet.getRange("A1").setValue(`日付: ${todayStr}`);
+    ss.setActiveSheet(newSheet);
+  } else {
+    todaySheet.showSheet(); // ← 既存でも必ず表示
+    console.log("今日のシートは既に存在:", todayStr);
+  }
+}
+
+// 👻 1週間以上前のシートを非表示（テンプレ・おともだちリスト・今日のシート除外）
+function hideOldSheets(todayStr) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const today = new Date();
+  const showAfter = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6);
+
+  const preservedSheets = ["テンプレート", "おともだちリスト", todayStr];
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  const sheets = ss.getSheets();
+
+  console.log("=== hideOldSheets 実行 ===");
+  console.log("todayStr:", todayStr);
+  console.log("showAfter:", showAfter);
+
+  sheets.forEach(sheet => {
+    const name = sheet.getName();
+    if (preservedSheets.includes(name)) {
+      console.log("保持対象:", name);
+      return;
+    }
+
+    if (dateRegex.test(name)) {
+      const [year, month, day] = name.split("-").map(Number);
+      const sheetDate = new Date(year, month - 1, day);
+      if (sheetDate < showAfter) {
+        console.log("非表示対象:", name);
+        sheet.hideSheet();
+      }
+    }
+  });
+}
+
+// 🕒 今日の日付文字列を取得（全関数で統一）
+function getTodayString() {
+  return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
+}

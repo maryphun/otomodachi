@@ -1,0 +1,114 @@
+function recordVisitBasedChanges() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const friendsSheet = ss.getSheetByName("おともだちリスト");
+  const logSheetName = "変動ログ";
+  const today = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd");
+
+  // おともだちリストの範囲取得
+  const rawData = friendsSheet.getRange(4, 1, friendsSheet.getLastRow() - 3, 10).getValues();
+  const headers = friendsSheet.getRange(5, 1, 1, 10).getValues()[0];
+
+  const noCol = headers.indexOf("No.");
+  const nameCol = headers.indexOf("氏名");
+  const balanceCol = headers.indexOf("貯うにょ額");
+  const visitDateCol = headers.indexOf("最終来店日");
+
+  if (noCol === -1 || nameCol === -1 || balanceCol === -1 || visitDateCol === -1) return;
+
+  // ログシート準備
+  let logSheet = ss.getSheetByName(logSheetName);
+  if (!logSheet) {
+    logSheet = ss.insertSheet(logSheetName);
+    logSheet.appendRow(["記録日", "No.", "氏名", "前回最終来店日", "最終来店日", "前回うにょ", "今回うにょ", "差分"]);
+  }
+
+  const lastRow = logSheet.getLastRow();
+  let logBody = [];
+  if (lastRow >= 2) {
+    logBody = logSheet.getRange(2, 1, lastRow - 1, 8).getValues();
+  }
+
+  const latestVisitDateMap = {};
+  const latestBalanceMap = {};
+
+  // ログ読み込み時のキー作成（No.は前ゼロ除去して統一）
+  logBody.forEach(row => {
+    const noStr = String(row[1]).replace(/^0+/, "");
+    const key = `${noStr}_${row[2]}`;
+    const loggedVisitRaw = row[4];
+    const loggedBalance = parseFloat(row[6]);
+
+    if (!loggedVisitRaw) return;
+
+    let loggedVisitDate;
+    if (loggedVisitRaw instanceof Date) {
+      loggedVisitDate = loggedVisitRaw;
+    } else if (typeof loggedVisitRaw === "string") {
+      const parts = loggedVisitRaw.split("/");
+      if (parts.length === 3) {
+        loggedVisitDate = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+      } else {
+        loggedVisitDate = new Date(loggedVisitRaw);
+      }
+    } else {
+      return;
+    }
+
+    if (isNaN(loggedVisitDate.getTime())) return;
+
+    if (!latestVisitDateMap[key] || loggedVisitDate.getTime() > latestVisitDateMap[key].getTime()) {
+      latestVisitDateMap[key] = loggedVisitDate;
+      latestBalanceMap[key] = loggedBalance;
+    }
+  });
+
+  const output = [];
+
+  // 元データのキーも同様に前ゼロ除去で作成
+  rawData.forEach(row => {
+    const no = row[noCol];
+    const name = row[nameCol];
+    const currentBalance = row[balanceCol];
+    let currentVisitRaw = row[visitDateCol];
+
+    if (!no || !name || typeof currentBalance !== "number") return;
+
+    // 最終来店日がDate型じゃなければ仮設定（1900/01/01）
+    if (!(currentVisitRaw instanceof Date)) {
+      currentVisitRaw = new Date(1900, 0, 1);  // 1900年1月1日（0は1月）
+    }
+
+    const noStr = String(no).replace(/^0+/, "");
+    const key = `${noStr}_${name}`;
+
+    const prevVisitDate = latestVisitDateMap[key];
+    const currentVisitDate = currentVisitRaw;
+
+    const prevVisitDateStr = prevVisitDate
+      ? Utilities.formatDate(prevVisitDate, "Asia/Tokyo", "yyyy/MM/dd")
+      : null;
+    const currentVisitDateStr = Utilities.formatDate(currentVisitDate, "Asia/Tokyo", "yyyy/MM/dd");
+
+    if (prevVisitDateStr === null || currentVisitDateStr > prevVisitDateStr) {
+      const prevBalance = latestBalanceMap[key] !== undefined ? latestBalanceMap[key] : 0;
+      const diff = currentBalance - prevBalance;
+
+      output.push([
+        today,
+        no,
+        name,
+        prevVisitDateStr || "-",
+        currentVisitDateStr,
+        prevBalance,
+        currentBalance,
+        diff
+      ]);
+    }
+  });
+
+  if (output.length > 0) {
+    logSheet.getRange(logSheet.getLastRow() + 1, 1, output.length, 8).setValues(output);
+  }
+
+  SpreadsheetApp.flush();
+}

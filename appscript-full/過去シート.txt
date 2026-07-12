@@ -1,0 +1,157 @@
+// ======================================================
+// チェックボックス監視：ログ!A2 が TRUE で処理実行
+// ======================================================
+function checkAndRunPDFCleanupStandalone(e) {
+  if (!e || !e.source) return; // 手動実行対策
+  const sheet = e.source.getActiveSheet();
+  const range = e.range;
+
+  if (sheet.getName() !== "ログ" || range.getA1Notation() !== "A2") return;
+
+  if (range.getValue() === true) {
+    runPDFCleanup(sheet);
+    sheet.getRange("B2").setValue(`実行: ${new Date()}`);
+    range.setValue(false);
+  }
+}
+
+// ======================================================
+// PDF保存＋古いシート削除メイン処理（10日より前）
+// ======================================================
+function runPDFCleanup(logSheet) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const today = new Date();
+  const deleteBefore = new Date(today);
+  deleteBefore.setDate(today.getDate() - 10);
+
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+
+  const targets = ss.getSheets().filter(sh => {
+    const n = sh.getName();
+    return dateRegex.test(n) && new Date(n) < deleteBefore;
+  });
+
+  // ログヘッダー
+  if (logSheet.getRange("A3").getValue() !== "日時") {
+    logSheet.getRange("A3:C3").setValues([["日時", "シート名", "PDFリンク"]]);
+  }
+
+  let row = getNextLogRow(logSheet); // 空行詰め対応
+
+  if (targets.length === 0) {
+    logSheet.getRange(row, 1).setValue("削除対象の古いシートはありません。");
+    return;
+  }
+
+  SpreadsheetApp.getUi().alert(`対象: ${targets.length}件のシートをPDF化します`);
+
+  targets.forEach(sh => {
+    try {
+      Logger.log(`▶ PDF出力中: ${sh.getName()}`);
+      const blob = exportSheetToPDFBlob(ss, sh);
+
+      if (!blob) {
+        Logger.log(`⚠ スキップ: ${sh.getName()}`);
+        logSheet.getRange(row++, 1, 1, 3)
+          .setValues([[new Date(), sh.getName(), "エクスポートスキップ（HTTP500）"]]);
+        return;
+      }
+
+      const [y, m] = sh.getName().split("-");
+      const folder = getOrCreateYearMonthFolder(y, m);
+      const file = folder.createFile(blob);
+
+      logSheet.getRange(row++, 1, 1, 3)
+        .setValues([[new Date(), sh.getName(), file.getUrl()]]);
+
+      Utilities.sleep(2500); // Rate制限対策
+      ss.deleteSheet(sh);
+
+    } catch (err) {
+      logSheet.getRange(row++, 1, 1, 3)
+        .setValues([[new Date(), sh.getName(), "エラー: " + err.message]]);
+      Logger.log("エラー詳細: " + err.stack);
+    }
+  });
+
+  SpreadsheetApp.getUi().alert("✅ PDF保存と削除が完了しました！");
+}
+
+// ======================================================
+// PDFエクスポート関数（非表示シート対応＋429/500リトライ）
+// ======================================================
+function exportSheetToPDFBlob(spreadsheet, sheet) {
+  const sheetId = sheet.getSheetId();
+  const wasHidden = sheet.isSheetHidden();
+
+  // 非表示の場合は一時的に表示
+  if (wasHidden) sheet.showSheet();
+
+  const url = `https://docs.google.com/spreadsheets/d/${spreadsheet.getId()}/export?` +
+    `format=pdf&portrait=false&size=A4&fitw=true&sheetnames=false&printtitle=false&` +
+    `pagenumbers=true&gridlines=false&fzr=false&gid=${sheetId}`;
+
+  const token = ScriptApp.getOAuthToken();
+  const options = { headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true };
+
+  let blob = null;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const response = UrlFetchApp.fetch(url, options);
+    const code = response.getResponseCode();
+
+    if (code === 200) {
+      blob = response.getBlob().setName(`${sheet.getName()}.pdf`);
+      break;
+    }
+
+    if (code === 429 || code === 500) {
+      const wait = (attempt + 1) * 5000;
+      Logger.log(`HTTP ${code} → ${wait / 1000}秒待って再試行 (${attempt + 1}/3)`);
+      Utilities.sleep(wait);
+      continue;
+    }
+
+    throw new Error(`PDFエクスポート失敗: HTTP ${code}`);
+  }
+
+  // 元が非表示なら再び隠す
+  if (wasHidden) sheet.hideSheet();
+
+  if (!blob) {
+    Logger.log(`❌ PDF出力失敗（HTTP500）: ${sheet.getName()}`);
+    return null;
+  }
+
+  return blob;
+}
+
+// ======================================================
+// 年/月フォルダ作成（マイドライブ直下）
+// ======================================================
+function getOrCreateYearMonthFolder(year, month) {
+  const root = DriveApp.getRootFolder(); // マイドライブ直下
+
+  const yearFolders = root.getFoldersByName(year);
+  const yearFolder = yearFolders.hasNext()
+    ? yearFolders.next()
+    : root.createFolder(year);
+
+  const monthFolders = yearFolder.getFoldersByName(month);
+  const monthFolder = monthFolders.hasNext()
+    ? monthFolders.next()
+    : yearFolder.createFolder(month);
+
+  return monthFolder;
+}
+
+// ======================================================
+// ログ書き込み時に空行を詰める関数
+// ======================================================
+function getNextLogRow(logSheet) {
+  const values = logSheet.getRange("A:A").getValues(); // A列全部
+  for (let i = 3; i < values.length; i++) { // 3行目からヘッダー想定
+    if (!values[i][0]) return i + 1; // 空の最初の行を返す（1-based）
+  }
+  return values.length + 1; // 空行がない場合は末尾+1
+}

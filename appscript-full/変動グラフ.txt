@@ -1,0 +1,110 @@
+// 📅 毎日1回：対象者一覧の作成＋B1にプルダウン設定
+function createPersonList() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const logSheet = ss.getSheetByName("変動ログ");
+  if (!logSheet) return;
+
+  let nameListSheet = ss.getSheetByName("対象者一覧");
+  if (!nameListSheet) {
+    nameListSheet = ss.insertSheet("対象者一覧");
+  } else {
+    nameListSheet.clear();
+  }
+
+  const logData = logSheet.getDataRange().getValues();
+  const header = logData[0];
+  const noCol = header.indexOf("No.");
+  const nameCol = header.indexOf("氏名");
+  if (noCol < 0 || nameCol < 0) return;
+
+  const map = {};
+  for (let i = 1; i < logData.length; i++) {
+    const no = logData[i][noCol];
+    const name = logData[i][nameCol];
+    if (no !== "" && name !== "") {
+      map[no] = name;
+    }
+  }
+
+  const sortedNos = Object.keys(map).map(Number).sort((a, b) => a - b);
+  const listValues = sortedNos.map(no => [`${no} ${map[no]}`]);
+  if (listValues.length === 0) return;
+
+  nameListSheet.getRange(1, 1, listValues.length, 1).setValues(listValues);
+
+  // B1 プルダウンセット
+  const chartSheet = ss.getSheetByName("うにょグラフ") || ss.insertSheet("うにょグラフ");
+  chartSheet.getRange("B1").clearDataValidations();
+  const range = nameListSheet.getRange(1, 1, listValues.length, 1);
+  const rule = SpreadsheetApp.newDataValidation()
+    .requireValueInRange(range, true)
+    .setAllowInvalid(false)
+    .build();
+  chartSheet.getRange("B1").setDataValidation(rule);
+
+  if (!chartSheet.getRange("B1").getValue()) {
+    chartSheet.getRange("B1").setValue(listValues[0][0]);
+  }
+}
+
+// 📈 グラフを更新する処理本体（onEditで呼び出される前提）
+function updateUnyoGraph() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const logSheet = ss.getSheetByName("変動ログ");
+  const chartSheet = ss.getSheetByName("うにょグラフ");
+  if (!logSheet || !chartSheet) return;
+
+  const selected = chartSheet.getRange("B1").getValue();
+  const splitIdx = selected.indexOf(" ");
+  if (splitIdx < 0) return;
+
+  const no = Number(selected.substring(0, splitIdx));
+  const name = selected.substring(splitIdx + 1);
+
+  const logData = logSheet.getDataRange().getValues();
+  const header = logData[0];
+  const noCol = header.indexOf("No.");
+  const nameCol = header.indexOf("氏名");
+  const dateCol = header.indexOf("最終来店日");
+  const valueCol = header.indexOf("今回うにょ");
+  if ([noCol, nameCol, dateCol, valueCol].some(c => c < 0)) return;
+
+  const personData = [];
+  for (let i = 1; i < logData.length; i++) {
+    const row = logData[i];
+    if (row[noCol] === no && row[nameCol] === name && row[dateCol] && row[valueCol] !== "") {
+      personData.push([new Date(row[dateCol]), row[valueCol]]);
+    }
+  }
+
+  if (personData.length === 0) return;
+
+  personData.sort((a, b) => a[0] - b[0]);
+
+  const startRow = 5;
+  const startCol = 1;
+  chartSheet.getRange(startRow, startCol, chartSheet.getMaxRows(), 2).clearContent();
+  chartSheet.getRange(startRow, startCol, 1, 2).setValues([["日付", "今回うにょ"]]);
+  chartSheet.getRange(startRow + 1, startCol, personData.length, 2).setValues(personData);
+
+  const charts = chartSheet.getCharts();
+  const dataRange = chartSheet.getRange(startRow, startCol, personData.length + 1, 2);
+
+  if (charts.length === 0) {
+    const chart = chartSheet.newChart()
+      .setChartType(Charts.ChartType.LINE)
+      .addRange(dataRange)
+      .setPosition(startRow, startCol + 3, 0, 0)
+      .setOption("title", `「${name}」のうにょ推移`)
+      .setOption("legend", { position: "none" })
+      .build();
+    chartSheet.insertChart(chart);
+  } else {
+    const chart = charts[0].modify()
+      .clearRanges()
+      .addRange(dataRange)
+      .setOption("title", `「${name}」のうにょ推移`)
+      .build();
+    chartSheet.updateChart(chart);
+  }
+}

@@ -1,0 +1,61 @@
+function recordTotalUnyo() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("おともだちリスト");
+  const logSheetName = "総うにょログ";
+  const today = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd");
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 4) return; // データなし
+
+  // D列（うにょ）と E列（最終来店日）のデータを取得
+  const unyoRange = sheet.getRange(4, 4, lastRow - 3, 1); // D列
+  const dateRange = sheet.getRange(4, 5, lastRow - 3, 1); // E列
+
+  const unyoValues = unyoRange.getValues().flat();
+  const dateValues = dateRange.getValues().flat();
+
+  // 今日と閾値日（93日前）
+  const now = new Date();
+  const threshold = new Date(now);
+  threshold.setDate(now.getDate() - 93);
+
+  // 総うにょ（全員）
+  const total = unyoValues
+    .filter(v => typeof v === "number")
+    .reduce((a, b) => a + b, 0);
+
+  // 有効うにょ（93日以内 or 空欄 の人だけ）
+  const validTotal = unyoValues
+    .map((v, i) => ({ value: v, lastVisit: dateValues[i] }))
+    .filter(obj =>
+      typeof obj.value === "number" &&
+      (
+        (obj.lastVisit instanceof Date && obj.lastVisit >= threshold) ||
+        obj.lastVisit === "" // 空欄は有効
+      )
+    )
+    .reduce((a, b) => a + b.value, 0);
+
+  // ログシート用意
+  let logSheet = ss.getSheetByName(logSheetName);
+  if (!logSheet) {
+    logSheet = ss.insertSheet(logSheetName);
+    logSheet.appendRow(["日付", "総うにょ", "有効うにょ"]);
+  }
+
+  // 同じ日付があれば上書き、なければ追記
+  const logLastRow = logSheet.getLastRow();
+  const data = logLastRow > 1 ? logSheet.getRange(2, 1, logLastRow - 1, 3).getValues() : [];
+  const map = {};
+  data.forEach((row, i) => {
+    map[row[0]] = i + 2;
+  });
+
+  if (map[today]) {
+    logSheet.getRange(map[today], 1, 1, 3).setValues([[today, total, validTotal]]);
+  } else {
+    logSheet.appendRow([today, total, validTotal]);
+  }
+
+  SpreadsheetApp.flush();
+}

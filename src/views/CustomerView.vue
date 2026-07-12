@@ -1984,6 +1984,8 @@ h1 {
   border-radius: 13px;
   font-size: 14px;
   font-weight: 750;
+  line-height: 1.55;
+  white-space: pre-line;
 }
 
 .transaction-message--error {

@@ -1,0 +1,233 @@
+function onEdit(e) {
+  const sheet = e.source.getActiveSheet();
+  const editedRow = e.range.getRow();
+  const editedCol = e.range.getColumn();
+  const sheetName = sheet.getName();
+  const masterSheetName = "おともだちリスト";
+
+  const col = {
+    friendNo: 2,
+    name: 4,
+    originalBalance: 5,
+    withdrawable: 6,
+    withdraw: 7,
+    startCalc: 5,
+    endCalc: 17,
+    trigger: 18,
+    result: 19
+  };
+
+  if (sheetName === masterSheetName && editedCol > 0 && editedRow > 5) return;
+
+  if (sheetName !== masterSheetName && editedRow > 5) {
+    if (editedCol === col.friendNo) {
+      const inputNo = String(e.range.getDisplayValue() || e.value || "").trim();
+      if (!/^\d{4}$/.test(inputNo)) return;
+
+      const masterSheet = e.source.getSheetByName(masterSheetName);
+      if (!masterSheet) return;
+
+      const masterHeaders = masterSheet.getRange(5, 1, 1, masterSheet.getLastColumn()).getValues()[0];
+      const noCol = masterHeaders.indexOf("No.") + 1;
+      const nameColMaster = masterHeaders.indexOf("氏名") + 1;
+      const balanceCol = masterHeaders.indexOf("貯うにょ額") + 1;
+      const lastVisitCol = masterHeaders.indexOf("最終来店日") + 1;
+      const visitCountCol = masterHeaders.indexOf("来店回数") + 1;
+      const firstVisitCol = masterHeaders.indexOf("初回来店日") + 1;
+
+      if (noCol === 0 || nameColMaster === 0 || balanceCol === 0 || lastVisitCol === 0) return;
+
+      const masterData = masterSheet.getRange(6, 1, masterSheet.getLastRow() - 5, masterSheet.getLastColumn()).getValues();
+
+      for (let i = 0; i < masterData.length; i++) {
+        if (normalizeFriendNo(masterData[i][noCol - 1]) === normalizeFriendNo(inputNo)) {
+          const name = masterData[i][nameColMaster - 1];
+          const balance = masterData[i][balanceCol - 1];
+          const lastVisit = masterData[i][lastVisitCol - 1];
+          const firstVisit = masterData[i][firstVisitCol - 1];
+
+          sheet.getRange(editedRow, col.name).setValue(name);
+
+          if (lastVisit instanceof Date) {
+            sheet.getRange(editedRow, 3).setValue(lastVisit);
+            sheet.getRange(editedRow, 3).setFontColor(null).setFontStyle(null);
+          } else {
+            sheet.getRange(editedRow, 3).setValue("来店日なし");
+            sheet.getRange(editedRow, 3).setFontColor("gray").setFontStyle("italic");
+          }
+
+          const balanceCell = sheet.getRange(editedRow, col.originalBalance);
+          const today = new Date();
+
+          if (lastVisit instanceof Date) {
+            const expiryDate = new Date(lastVisit);
+            expiryDate.setDate(expiryDate.getDate() + 93);
+
+            if (today > expiryDate) {
+              balanceCell.setValue("期限切れ").setFontColor("red").setFontStyle("italic");
+              sheet.getRange(editedRow, col.withdrawable).setValue(0).setFontColor("red").setFontStyle("italic");
+            } else {
+              balanceCell.setValue(balance);
+              if (typeof balance === "number") {
+                balanceCell.setFontColor("orange").setFontStyle("normal");
+              } else {
+                balanceCell.setFontColor(null).setFontStyle(null);
+              }
+              updateWithdrawable(sheet, editedRow, col);
+            }
+          } else {
+            balanceCell.setValue(balance || "貯うにょ記載なし").setFontColor("gray").setFontStyle("italic");
+            updateWithdrawable(sheet, editedRow, col);
+          }
+
+          if (!firstVisit && (balance === "" || balance === null)) {
+            masterSheet.getRange(i + 6, firstVisitCol).setValue(today);
+          }
+
+          return;
+        }
+      }
+
+      sheet.getRange(editedRow, 3, 1, 3).clearContent();
+      return;
+    }
+
+    if (editedCol >= col.originalBalance && editedCol <= col.endCalc) {
+      updateWithdrawable(sheet, editedRow, col);
+    }
+
+    if (editedCol === col.trigger) {
+      updateRowTotal(sheet, editedRow, col);
+      updateMasterList(sheet, editedRow, col);
+    }
+  }
+
+  if (sheetName === "うにょグラフ" && e.range.getA1Notation() === "B1") {
+    updateGraphData();
+  }
+}
+
+function updateWithdrawable(sheet, row, col) {
+  if (row <= 5) return;
+
+  const friendNo = sheet.getRange(row, col.friendNo).getValue();
+  if (!friendNo) {
+    sheet.getRange(row, col.withdrawable).clearContent();
+    return;
+  }
+
+  const balanceVal = sheet.getRange(row, col.originalBalance).getValue();
+  const withdraw = sheet.getRange(row, col.withdraw).getValue();
+  const parsedBalance = parseUnyoAmount(balanceVal);
+  let base = !isNaN(parsedBalance) ? parsedBalance : 0;
+
+  const extraValues = sheet.getRange(row, col.withdraw + 1, 1, col.endCalc - col.withdraw).getValues()[0];
+  let result = base;
+
+  const parsedWithdraw = parseUnyoAmount(withdraw);
+  if (!isNaN(parsedWithdraw)) result -= Math.abs(parsedWithdraw);
+
+  for (let i = 0; i < extraValues.length; i++) {
+    const val = parseUnyoAmount(extraValues[i]);
+    if (!isNaN(val)) result += val;
+  }
+
+  sheet.getRange(row, col.withdrawable).setValue(result).setFontColor(null).setFontStyle(null);
+}
+
+function updateRowTotal(sheet, row, col) {
+  if (row <= 5) return;
+
+  const values = sheet.getRange(row, col.startCalc, 1, col.endCalc - col.startCalc + 1).getValues()[0];
+  let total = 0;
+
+  for (let i = 0; i < values.length; i++) {
+    if (i === 1) continue;
+    const val = parseUnyoAmount(values[i]);
+    if (!isNaN(val)) total += i === 2 ? -Math.abs(val) : val;
+  }
+
+  const rValue = parseUnyoAmount(sheet.getRange(row, col.trigger).getValue());
+  if (!isNaN(rValue)) total += rValue;
+
+  sheet.getRange(row, col.result).setValue(total);
+}
+
+function updateMasterList(sheet, row, col) {
+  if (row <= 5) return;
+
+  const sheetName = sheet.getName();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(sheetName)) return;
+
+  const sheetDate = new Date(sheetName);
+  const sheetDateStr = Utilities.formatDate(sheetDate, Session.getScriptTimeZone(), "yyyy-MM-dd");
+
+  const inputFriendNo = sheet.getRange(row, col.friendNo).getValue();
+  const newBalance = parseUnyoAmount(sheet.getRange(row, col.result).getValue());
+
+  if (isNaN(newBalance)) return;
+
+  const masterSheet = sheet.getParent().getSheetByName("おともだちリスト");
+  const headers = masterSheet.getRange(5, 1, 1, masterSheet.getLastColumn()).getValues()[0];
+
+  const noCol = headers.indexOf("No.") + 1;
+  const balanceCol = headers.indexOf("貯うにょ額") + 1;
+  const lastVisitCol = headers.indexOf("最終来店日") + 1;
+  const visitCountCol = headers.indexOf("来店回数") + 1;
+
+  if (noCol === 0 || balanceCol === 0 || lastVisitCol === 0 || visitCountCol === 0) return;
+
+  const masterData = masterSheet.getRange(6, 1, masterSheet.getLastRow() - 5, masterSheet.getLastColumn()).getValues();
+
+  for (let i = 0; i < masterData.length; i++) {
+    if (normalizeFriendNo(masterData[i][noCol - 1]) === normalizeFriendNo(inputFriendNo)) {
+      const masterRow = i + 6;
+
+      const lastVisitCell = masterSheet.getRange(masterRow, lastVisitCol).getValue();
+      let alreadyVisited = false;
+
+      if (lastVisitCell instanceof Date) {
+        const lastVisitStr = Utilities.formatDate(lastVisitCell, Session.getScriptTimeZone(), "yyyy-MM-dd");
+        alreadyVisited = (lastVisitStr === sheetDateStr);
+      }
+
+      if (!alreadyVisited) {
+        const count = parseInt(masterSheet.getRange(masterRow, visitCountCol).getValue(), 10) || 0;
+        masterSheet.getRange(masterRow, visitCountCol).setValue(count + 1);
+      }
+
+      masterSheet.getRange(masterRow, balanceCol).setValue(newBalance);
+      masterSheet.getRange(masterRow, lastVisitCol).setValue(sheetDate);
+
+      break;
+    }
+  }
+}
+
+function parseUnyoAmount(value) {
+  if (typeof value === "number") return value;
+
+  const text = String(value || "").trim();
+  if (!text) return NaN;
+
+  const isNegative = text.startsWith("▲") || text.startsWith("-");
+  const normalized = text
+    .replace(/[▲,]/g, "")
+    .replace(/^-/, "");
+  const amount = parseFloat(normalized);
+
+  if (isNaN(amount)) return NaN;
+
+  return isNegative ? -Math.abs(amount) : amount;
+}
+
+function normalizeFriendNo(value) {
+  const text = String(value || "").trim();
+  const normalized = text.replace(/^0+/, "");
+
+  return normalized || "0";
+}
+
+function updateGraphData() {
+  // 必要なら定義
+}

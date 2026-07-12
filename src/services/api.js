@@ -26,16 +26,76 @@ const CUSTOMER_DETAIL_STALE_MS = 30 * DAY_MS
 const CUSTOMER_HISTORY_FRESH_MS = 10 * MINUTE_MS
 const CUSTOMER_HISTORY_STALE_MS = 14 * DAY_MS
 const TODAY_HISTORY_FRESH_MS = 5 * MINUTE_MS
+const DEFAULT_API_TIMEOUT_MS = 15 * 1000
+const WRITE_API_TIMEOUT_MS = 45 * 1000
+const WRITE_ACTIONS = new Set([
+  'addTransaction',
+  'checkoutCustomer',
+  'createCustomer',
+  'updateCustomerProfilePublic',
+])
 
 let allCustomersRequest = null
 const customerRequests = new Map()
 
+function getApiTimeoutMs(action) {
+  return WRITE_ACTIONS.has(action)
+    ? WRITE_API_TIMEOUT_MS
+    : DEFAULT_API_TIMEOUT_MS
+}
+
+function isLocalApiHost() {
+  return [
+    'localhost',
+    '127.0.0.1',
+  ].includes(window.location.hostname)
+}
+
+function buildApiProblemMessage(
+  action,
+  mainMessage,
+  timeoutMs,
+) {
+  const lines = [
+    mainMessage,
+    '',
+    'Likely reasons:',
+    '- Apps Script is still processing or cold starting',
+    '- Apps Script was not deployed as a new version',
+    '- APPS_SCRIPT_URL points to an old or different Apps Script',
+    '- APPS_SCRIPT_SECRET does not match WEBAPP_API_SECRET',
+  ]
+
+  if (WRITE_ACTIONS.has(action)) {
+    lines.push(
+      '',
+      'Before pressing again, check the sheet. The write may still finish after this timeout.',
+    )
+  }
+
+  if (isLocalApiHost()) {
+    lines.push(
+      '',
+      'Localhost checks:',
+      '- Check .dev.vars APPS_SCRIPT_URL / APPS_SCRIPT_SECRET',
+    )
+  }
+
+  lines.push(
+    '',
+    `Waited: ${Math.round(timeoutMs / 1000)} seconds`,
+  )
+
+  return lines.join('\n')
+}
+
 function apiGet(action, parameters = {}) {
   const url = new URL(API_URL, window.location.origin)
   const controller = new AbortController()
+  const timeoutMs = getApiTimeoutMs(action)
   const timeoutId = window.setTimeout(() => {
     controller.abort()
-  }, 15000)
+  }, timeoutMs)
 
   url.searchParams.set('action', action)
 
@@ -55,8 +115,11 @@ function apiGet(action, parameters = {}) {
 
       if (!response.ok || !result?.success) {
         throw new Error(
-          result?.error ||
-            'データの取得に失敗しました',
+          buildApiProblemMessage(
+            action,
+            result?.error || 'Request failed',
+            timeoutMs,
+          ),
         )
       }
 
@@ -65,11 +128,28 @@ function apiGet(action, parameters = {}) {
     .catch((error) => {
       if (error.name === 'AbortError') {
         throw new Error(
-          'サーバーへの接続がタイムアウトしました',
+          buildApiProblemMessage(
+            action,
+            'Server connection timed out',
+            timeoutMs,
+          ),
         )
       }
 
       throw error
+    })
+    .catch((error) => {
+      if (String(error.message || '').includes('Likely reasons:')) {
+        throw error
+      }
+
+      throw new Error(
+        buildApiProblemMessage(
+          action,
+          error.message || 'Request failed',
+          timeoutMs,
+        ),
+      )
     })
     .finally(() => {
       window.clearTimeout(timeoutId)
