@@ -1381,21 +1381,36 @@ function findDailyCustomerRowOrFirstEmpty_(sheet, customerCode) {
   refreshDailyColumns_(sheet);
 
   const lastRow = Math.max(sheet.getLastRow(), WEBAPP_DAILY_START_ROW);
-  const values = sheet
+  const width =
+    WEBAPP_DAILY_COLUMNS.endingRemaining -
+    WEBAPP_DAILY_COLUMNS.code +
+    1;
+  const displayValues = sheet
     .getRange(
       WEBAPP_DAILY_START_ROW,
       WEBAPP_DAILY_COLUMNS.code,
       lastRow - WEBAPP_DAILY_START_ROW + 1,
-      1,
+      width,
     )
     .getDisplayValues();
   let emptyRow = null;
 
-  for (let index = 0; index < values.length; index++) {
+  for (let index = 0; index < displayValues.length; index++) {
     const rowNumber = WEBAPP_DAILY_START_ROW + index;
-    const code = values[index][0];
+    const row = displayValues[index];
+    const code = row[0];
+    const endingText = String(
+      row[
+        WEBAPP_DAILY_COLUMNS.endingRemaining -
+          WEBAPP_DAILY_COLUMNS.code
+      ] || '',
+    ).trim();
 
-    if (codesMatch_(code, customerCode)) {
+    // R列が入っている行は退店済み。再来店時は新しい行を使う
+    if (
+      codesMatch_(code, customerCode) &&
+      !endingText
+    ) {
       return {
         existingRow: rowNumber,
         emptyRow,
