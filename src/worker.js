@@ -21,7 +21,12 @@ export default {
       return publicCustomerPage_(url, env)
     }
 
-    if (url.pathname === '/otopo.png') {
+    if (
+      [
+        '/otopo.png',
+        '/unknown-otomo.png',
+      ].includes(url.pathname)
+    ) {
       return env.ASSETS.fetch(request)
     }
 
@@ -324,7 +329,7 @@ async function publicCustomerPage_(requestUrl, env) {
   )
 
   if (!token) {
-    return publicCustomerErrorPage_('公開QRが無効です')
+    return publicCustomerErrorPage_('この人知りません！')
   }
 
   let result
@@ -343,7 +348,7 @@ async function publicCustomerPage_(requestUrl, env) {
 
   if (!result.success) {
     return publicCustomerErrorPage_(
-      result.error || '公開QRが無効です',
+      result.error || 'この人知りません！',
     )
   }
 
@@ -805,7 +810,7 @@ async function getPublicCustomerByToken_(env, publicToken) {
   if (!token) {
     return {
       success: false,
-      error: '個人QRコードが無効です',
+      error: 'この人知りません！',
     }
   }
 
@@ -826,7 +831,7 @@ async function getPublicCustomerByToken_(env, publicToken) {
   if (!row?.customer_code) {
     return {
       success: false,
-      error: '個人QRコードが無効です',
+      error: 'この人知りません！',
     }
   }
 
@@ -928,7 +933,8 @@ function publicCustomerErrorPage_(message) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>個人QRコード</title>
+  <title>おともだちポーカー</title>
+  <link rel="icon" type="image/png" href="/otopo.png">
   <style>
     body {
       min-height: 100dvh;
@@ -943,12 +949,22 @@ function publicCustomerErrorPage_(message) {
 
     main {
       width: min(100%, 420px);
-      padding: 24px;
+      padding: 22px;
       background: white;
       border: 1px solid rgb(23 50 77 / 10%);
       border-radius: 24px;
       box-shadow: 0 18px 46px rgb(15 34 53 / 13%);
       text-align: center;
+    }
+
+    .error-image {
+      display: block;
+      width: min(100%, 250px);
+      aspect-ratio: 1 / 1;
+      margin: 0 auto 18px;
+      object-fit: cover;
+      border-radius: 20px;
+      box-shadow: 0 10px 24px rgb(15 34 53 / 12%);
     }
 
     h1 {
@@ -965,7 +981,12 @@ function publicCustomerErrorPage_(message) {
 </head>
 <body>
   <main>
-    <h1>個人QRコード</h1>
+    <img
+      class="error-image"
+      src="/unknown-otomo.png"
+      alt=""
+    >
+    <h1>おともだちポーカー</h1>
     <p>${escapedMessage}</p>
   </main>
 </body>
