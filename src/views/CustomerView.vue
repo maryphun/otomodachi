@@ -523,12 +523,7 @@ async function openPublicShare() {
   publicShareError.value = ''
   publicShareSuccess.value = ''
 
-  if (!publicProfile.value) {
-    await loadPublicProfile()
-    return
-  }
-
-  await renderPublicQr()
+  await loadPublicProfile()
 }
 
 function closePublicShare() {
