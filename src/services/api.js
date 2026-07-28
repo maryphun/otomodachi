@@ -718,6 +718,51 @@ function updateTodayActiveCustomersCacheFromTransaction(
   writeTodayActiveCustomersCache(customers)
 }
 
+function updateTodayActiveCustomersCacheFromNewCustomer(
+  customer,
+) {
+  const customerCode = normalizeCustomerCode(
+    customer?.customerCode,
+  )
+
+  if (!customerCode) {
+    return
+  }
+
+  const cached = readTodayActiveCustomersCacheRecord()
+  const customers = cached ? [...cached.data] : []
+  const index = customers.findIndex((cachedCustomer) =>
+    customerCodesMatch(
+      cachedCustomer.customerCode,
+      customerCode,
+    ),
+  )
+  const existing = index >= 0 ? customers[index] : null
+  const nextCustomer = {
+    ...existing,
+    customerCode,
+    customerName: String(
+      customer.customerName ||
+        existing?.customerName ||
+        '',
+    ),
+    date: new Date().toISOString().slice(0, 10),
+    balanceBefore: 0,
+    currentBalance: 0,
+    chipChange: 0,
+    movementCount: 0,
+    lastMovementAmount: 0,
+  }
+
+  if (index >= 0) {
+    customers[index] = nextCustomer
+  } else {
+    customers.push(nextCustomer)
+  }
+
+  writeTodayActiveCustomersCache(customers)
+}
+
 function removeTodayActiveCustomerFromCache(customerCode) {
   const cached = readTodayActiveCustomersCacheRecord()
 
@@ -890,6 +935,12 @@ export function createCustomer(
   return apiGet('createCustomer', {
     customerName,
     initialBalance,
+  }).then((result) => {
+    updateTodayActiveCustomersCacheFromNewCustomer(
+      result,
+    )
+
+    return result
   })
 }
 

@@ -672,63 +672,92 @@ function checkoutCustomer_(customerCode, endingAmount) {
 }
 
 function createCustomer_(customerName, initialBalance) {
-  const name = String(customerName || '').trim();
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
 
-  if (!name) {
-    throw new Error('お名前を入力してください');
+  try {
+    const name = String(customerName || '').trim();
+
+    if (!name) {
+      throw new Error('お名前を入力してください');
+    }
+
+    const balance = Math.max(
+      0,
+      Number(initialBalance || 0),
+    );
+    const sheet = getCustomerSheet_();
+    const lastRow = Math.max(
+      sheet.getLastRow(),
+      WEBAPP_CUSTOMER_START_ROW - 1,
+    );
+    const customers = readCustomers_();
+    const nextNumber =
+      customers.reduce((max, customer) => {
+        const number = Number(
+          stripLeadingZeroes_(customer.customerCode),
+        );
+        return Number.isFinite(number)
+          ? Math.max(max, number)
+          : max;
+      }, 0) + 1;
+
+    const customerCode = String(nextNumber).padStart(4, '0');
+    const targetRow = lastRow + 1;
+    const customer = {
+      customerCode,
+      customerName: name,
+      customerReading: name,
+      currentBalance: balance,
+      lastVisit: '',
+      otoPoints: null,
+      memo: '',
+      visitCount: null,
+      firstVisit: '',
+      profilePublic: false,
+    };
+
+    sheet
+      .getRange(targetRow, 1, 1, 9)
+      .setValues([
+        [
+          customerCode,
+          name,
+          name,
+          balance,
+          '',
+          '',
+          '',
+          '',
+          '',
+        ],
+      ]);
+
+    const todaySheet = getOrCreateTodaySheet_();
+    const todayRowNumber = getOrCreateDailyCustomerRow_(
+      todaySheet,
+      {
+        ...customer,
+        currentBalance: 0,
+      },
+    );
+
+    // 新規登録は店内行だけ作り、引き出し可能額は0から始める
+    writeDailyConfirmedBalance_(
+      todaySheet,
+      todayRowNumber,
+      0,
+    );
+
+    return {
+      ...customer,
+      currentBalance: 0,
+      initialBalance: balance,
+      todayRowNumber,
+    };
+  } finally {
+    lock.releaseLock();
   }
-
-  const balance = Math.max(
-    0,
-    Number(initialBalance || 0),
-  );
-  const sheet = getCustomerSheet_();
-  const lastRow = Math.max(
-    sheet.getLastRow(),
-    WEBAPP_CUSTOMER_START_ROW - 1,
-  );
-  const customers = readCustomers_();
-  const nextNumber =
-    customers.reduce((max, customer) => {
-      const number = Number(
-        stripLeadingZeroes_(customer.customerCode),
-      );
-      return Number.isFinite(number)
-        ? Math.max(max, number)
-        : max;
-    }, 0) + 1;
-
-  const customerCode = String(nextNumber).padStart(4, '0');
-  const targetRow = lastRow + 1;
-
-  sheet
-    .getRange(targetRow, 1, 1, 9)
-    .setValues([
-      [
-        customerCode,
-        name,
-        name,
-        balance,
-        '',
-        '',
-        '',
-        '',
-        '',
-      ],
-    ]);
-
-  return {
-    customerCode,
-    customerName: name,
-    customerReading: name,
-    currentBalance: balance,
-    lastVisit: '',
-    otoPoints: null,
-    memo: '',
-    visitCount: null,
-    firstVisit: '',
-    profilePublic: false,
-  };
 }
 
 function readCustomers_() {
@@ -1802,7 +1831,26 @@ function dailyRowToActiveCustomer_(
   }
 
   if (movementCount === 0) {
-    return null;
+    const balanceAfterText = String(
+      displayRow[WEBAPP_DAILY_COLUMNS.balanceAfter - 1] ||
+        row[WEBAPP_DAILY_COLUMNS.balanceAfter - 1] ||
+        '',
+    ).trim();
+
+    if (!balanceAfterText) {
+      return null;
+    }
+
+    const confirmedBalance = numberFromCell_(
+      row[WEBAPP_DAILY_COLUMNS.balanceAfter - 1],
+      displayRow[WEBAPP_DAILY_COLUMNS.balanceAfter - 1],
+    );
+
+    if (!Number.isFinite(confirmedBalance)) {
+      return null;
+    }
+
+    currentBalance = confirmedBalance;
   }
 
   return {
