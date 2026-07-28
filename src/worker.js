@@ -531,13 +531,17 @@ async function publicCustomerPage_(requestUrl, env) {
     }
 
     .history-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
       width: 100%;
       min-height: 58px;
       border: 0;
       border-radius: 18px;
       color: white;
-      background: #d4238a;
-      box-shadow: 0 12px 28px rgb(212 35 138 / 20%);
+      background: #173754;
+      box-shadow: 0 12px 28px rgb(23 55 84 / 20%);
       font: inherit;
       font-size: 16px;
       font-weight: 850;
@@ -554,7 +558,23 @@ async function publicCustomerPage_(requestUrl, env) {
 
     .history-button:disabled {
       cursor: wait;
-      opacity: .72;
+      opacity: .9;
+    }
+
+    .history-button.is-loading::after {
+      content: "";
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgb(255 255 255 / 42%);
+      border-top-color: white;
+      border-radius: 999px;
+      animation: history-spin 800ms linear infinite;
+    }
+
+    @keyframes history-spin {
+      to {
+        transform: rotate(360deg);
+      }
     }
 
     .history-panel {
@@ -716,17 +736,18 @@ async function publicCustomerPage_(requestUrl, env) {
     let historyLoaded = false
 
     historyButton.addEventListener('click', async () => {
-      historyPanel.classList.add('is-visible')
       historyButton.setAttribute('aria-expanded', 'true')
 
       if (historyLoaded) {
         return
       }
 
+      historyPanel.classList.remove('is-visible')
       historyButton.disabled = true
+      historyButton.classList.add('is-loading')
       historyButton.textContent = '読み込み中...'
       historyStatus.classList.remove('is-error')
-      historyStatus.textContent = '読み込み中...'
+      historyStatus.textContent = ''
 
       try {
         const response = await fetch(
@@ -746,12 +767,15 @@ async function publicCustomerPage_(requestUrl, env) {
         renderHistory(Array.isArray(result.data) ? result.data : [])
         historyLoaded = true
         historyButton.disabled = false
+        historyButton.classList.remove('is-loading')
         historyButton.textContent = 'うにょ履歴を表示中'
       } catch (error) {
+        historyPanel.classList.add('is-visible')
         historyStatus.classList.add('is-error')
         historyStatus.textContent =
           error.message || '履歴を読み込めませんでした'
         historyButton.disabled = false
+        historyButton.classList.remove('is-loading')
         historyButton.textContent = 'もう一度読み込む'
       }
     })
@@ -766,6 +790,7 @@ async function publicCustomerPage_(requestUrl, env) {
       if (transactions.length === 0) {
         historyPanel.innerHTML =
           '<p class="history-status">履歴はありません</p>'
+        historyPanel.classList.add('is-visible')
         return
       }
 
@@ -869,6 +894,7 @@ async function publicCustomerPage_(requestUrl, env) {
       }
 
       historyPanel.append(svg)
+      historyPanel.classList.add('is-visible')
     }
 
     function buildChartPoints(transactions) {
