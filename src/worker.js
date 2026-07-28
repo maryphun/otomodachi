@@ -1,5 +1,9 @@
 const SESSION_COOKIE_NAME = 'otomo_session'
 const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
+const PRODUCTION_ORIGIN =
+  'https://otomodachi.otopo.workers.dev'
+const INTERNAL_QR_API_SECRET_HEADER =
+  'x-otomo-qr-api-secret'
 const TEXT_ENCODER = new TextEncoder()
 
 export default {
@@ -27,6 +31,15 @@ export default {
 
     if (url.pathname === '/auth/logout') {
       return logout_()
+    }
+
+    if (
+      isQrProfileApiAction_(url) &&
+      hasValidInternalQrApiSecret_(request, env)
+    ) {
+      return handleApi_(url, env, {
+        skipLocalQrProxy: true,
+      })
     }
 
     const isAuthenticated =
@@ -527,10 +540,18 @@ async function publicCustomerPage_(requestUrl, env) {
   )
 }
 
-async function handleApi_(requestUrl, env) {
+async function handleApi_(requestUrl, env, options = {}) {
   const action = requestUrl.searchParams.get('action') || ''
 
   try {
+    if (
+      !options.skipLocalQrProxy &&
+      isLocalRequestHost_(requestUrl.hostname) &&
+      isQrProfileApiAction_(requestUrl)
+    ) {
+      return proxyProductionQrApi_(requestUrl, env)
+    }
+
     if (action === 'getCustomerPublicProfile') {
       return jsonResponse_(
         await getCustomerPublicProfile_(
@@ -564,6 +585,83 @@ async function handleApi_(requestUrl, env) {
   }
 
   return proxyAppsScript_(requestUrl, env)
+}
+
+function isQrProfileApiAction_(requestUrl) {
+  if (
+    requestUrl.pathname !== '/api' &&
+    !requestUrl.pathname.startsWith('/api/')
+  ) {
+    return false
+  }
+
+  return [
+    'getCustomerPublicProfile',
+    'updateCustomerProfilePublic',
+  ].includes(requestUrl.searchParams.get('action') || '')
+}
+
+function isLocalRequestHost_(hostname) {
+  return [
+    'localhost',
+    '127.0.0.1',
+  ].includes(hostname)
+}
+
+function hasValidInternalQrApiSecret_(request, env) {
+  if (!env.APPS_SCRIPT_SECRET) {
+    return false
+  }
+
+  return (
+    request.headers.get(INTERNAL_QR_API_SECRET_HEADER) ===
+    env.APPS_SCRIPT_SECRET
+  )
+}
+
+async function proxyProductionQrApi_(requestUrl, env) {
+  if (!env.APPS_SCRIPT_SECRET) {
+    return jsonResponse_(
+      {
+        success: false,
+        error: 'QR API secret is not configured',
+      },
+      500,
+    )
+  }
+
+  const targetUrl = new URL('/api', PRODUCTION_ORIGIN)
+
+  for (const key of [
+    'action',
+    'customerCode',
+    'profilePublic',
+  ]) {
+    const value = requestUrl.searchParams.get(key)
+
+    if (value !== null) {
+      targetUrl.searchParams.set(key, value)
+    }
+  }
+
+  const response = await fetch(targetUrl.toString(), {
+    method: 'GET',
+    headers: {
+      accept: 'application/json',
+      [INTERNAL_QR_API_SECRET_HEADER]:
+        env.APPS_SCRIPT_SECRET,
+    },
+  })
+
+  const body = await response.text()
+
+  return new Response(body, {
+    status: response.status,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+    },
+  })
 }
 
 async function getCustomerPublicProfile_(env, customerCode) {
