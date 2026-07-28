@@ -71,6 +71,9 @@ const numberKeys = [
   '9',
 ]
 
+const PUBLIC_CUSTOMER_ORIGIN =
+  'https://otomodachi.otopo.workers.dev'
+
 const customerCode = computed(() => {
   return String(route.params.customerCode || '')
 })
@@ -82,7 +85,7 @@ const publicShareUrl = computed(() => {
     return ''
   }
 
-  return `${window.location.origin}/public/customer/${encodeURIComponent(token)}`
+  return `${PUBLIC_CUSTOMER_ORIGIN}/public/customer/${encodeURIComponent(token)}`
 })
 
 const hasPublicProfile = computed(() => {
