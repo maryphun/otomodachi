@@ -5,6 +5,14 @@
   "vars": {
     "APPS_SCRIPT_URL": "https://script.google.com/macros/s/AKfycby8bn6bIhS9bDRxjHJUaCeUEeaqwWP4bfsyMkHnD1xXM1hnB83-4uUw7JJqarbAVtN_EA/exec"
   },
+  "d1_databases": [
+    {
+      "binding": "QR_DB",
+      "database_name": "otomodachi-public-profiles",
+      "database_id": "b763968e-2f79-4d33-96c3-6990eeea2cd8",
+      "migrations_dir": "migrations"
+    }
+  ],
   "assets": {
     "directory": "./dist/",
     "binding": "ASSETS",

@@ -140,13 +140,6 @@ function dispatch_(action, parameters) {
         parameters.initialBalance,
       );
 
-    case 'updateCustomerProfilePublic':
-      return {
-        customerCode: normalizeCode_(parameters.customerCode),
-        profilePublic:
-          String(parameters.profilePublic) === 'true',
-      };
-
     default:
       throw new Error(`Unknown action: ${action}`);
   }

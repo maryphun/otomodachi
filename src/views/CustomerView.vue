@@ -1,5 +1,7 @@
 <script setup>
 
+import QRCode from 'qrcode'
+
 import {
   computed,
   nextTick,
@@ -17,7 +19,9 @@ import {
   getCachedCustomer,
   getCachedHistory,
   getCustomer,
+  getCustomerPublicProfile,
   getHistory,
+  updateCustomerProfilePublic,
 } from '../services/api'
 
 import {
@@ -41,12 +45,19 @@ const selectedAction = ref('')
 const isLoading = ref(true)
 const isHistoryLoading = ref(false)
 const isSavingTransaction = ref(false)
+const isPublicShareOpen = ref(false)
+const isPublicShareLoading = ref(false)
+const isPublicShareSaving = ref(false)
 
 const errorMessage = ref('')
 const transactionError = ref('')
 const transactionSuccess = ref('')
+const publicShareError = ref('')
+const publicShareSuccess = ref('')
 
 const amountText = ref('')
+const publicProfile = ref(null)
+const publicQrDataUrl = ref('')
 
 const numberKeys = [
   '1',
@@ -62,6 +73,31 @@ const numberKeys = [
 
 const customerCode = computed(() => {
   return String(route.params.customerCode || '')
+})
+
+const publicShareUrl = computed(() => {
+  const token = publicProfile.value?.publicToken
+
+  if (!token) {
+    return ''
+  }
+
+  return `${window.location.origin}/public/customer/${encodeURIComponent(token)}`
+})
+
+const hasPublicProfile = computed(() => {
+  return Boolean(publicProfile.value?.profilePublic)
+})
+
+const publicProfileButtonLabel = computed(() => {
+  if (
+    hasPublicProfile.value ||
+    customer.value?.profilePublic
+  ) {
+    return '発行済み'
+  }
+
+  return ''
 })
 
 const transactionAmount = computed(() => {
@@ -473,6 +509,170 @@ function closeAction() {
   amountText.value = ''
   transactionError.value = ''
   transactionSuccess.value = ''
+}
+
+async function openPublicShare() {
+  if (isPublicShareSaving.value) {
+    return
+  }
+
+  isPublicShareOpen.value = true
+  publicShareError.value = ''
+  publicShareSuccess.value = ''
+
+  if (!publicProfile.value) {
+    await loadPublicProfile()
+    return
+  }
+
+  await renderPublicQr()
+}
+
+function closePublicShare() {
+  if (isPublicShareSaving.value) {
+    return
+  }
+
+  isPublicShareOpen.value = false
+  publicShareError.value = ''
+  publicShareSuccess.value = ''
+}
+
+async function loadPublicProfile() {
+  isPublicShareLoading.value = true
+  publicShareError.value = ''
+
+  try {
+    publicProfile.value =
+      await getCustomerPublicProfile(
+        customerCode.value,
+      )
+
+    if (customer.value) {
+      customer.value = {
+        ...customer.value,
+        profilePublic: Boolean(
+          publicProfile.value?.profilePublic,
+        ),
+      }
+      cacheCustomer(customer.value)
+    }
+
+    await renderPublicQr()
+  } catch (error) {
+    console.error(error)
+    publicShareError.value =
+      error.message || '公開QRの確認に失敗しました'
+  } finally {
+    isPublicShareLoading.value = false
+  }
+}
+
+async function enablePublicShare() {
+  isPublicShareSaving.value = true
+  publicShareError.value = ''
+  publicShareSuccess.value = ''
+
+  try {
+    publicProfile.value =
+      await updateCustomerProfilePublic(
+        customerCode.value,
+        true,
+      )
+
+    if (customer.value) {
+      customer.value = {
+        ...customer.value,
+        profilePublic: true,
+      }
+      cacheCustomer(customer.value)
+    }
+
+    await renderPublicQr()
+    publicShareSuccess.value = '個人QRコードを発行しました'
+  } catch (error) {
+    console.error(error)
+    publicShareError.value =
+      error.message || '公開QRの発行に失敗しました'
+  } finally {
+    isPublicShareSaving.value = false
+  }
+}
+
+async function disablePublicShare() {
+  const confirmed = window.confirm(
+    'このおともだちの個人QRコードを停止しますか？\n今までのQRリンクは使えなくなります。',
+  )
+
+  if (!confirmed) {
+    return
+  }
+
+  isPublicShareSaving.value = true
+  publicShareError.value = ''
+  publicShareSuccess.value = ''
+
+  try {
+    publicProfile.value =
+      await updateCustomerProfilePublic(
+        customerCode.value,
+        false,
+      )
+    publicQrDataUrl.value = ''
+
+    if (customer.value) {
+      customer.value = {
+        ...customer.value,
+        profilePublic: false,
+      }
+      cacheCustomer(customer.value)
+    }
+
+    publicShareSuccess.value = '公開を停止しました'
+  } catch (error) {
+    console.error(error)
+    publicShareError.value =
+      error.message || '公開停止に失敗しました'
+  } finally {
+    isPublicShareSaving.value = false
+  }
+}
+
+async function renderPublicQr() {
+  if (!publicShareUrl.value) {
+    publicQrDataUrl.value = ''
+    return
+  }
+
+  publicQrDataUrl.value = await QRCode.toDataURL(
+    publicShareUrl.value,
+    {
+      width: 260,
+      margin: 1,
+      color: {
+        dark: '#173754',
+        light: '#ffffff',
+      },
+    },
+  )
+}
+
+async function copyPublicShareUrl() {
+  if (!publicShareUrl.value) {
+    return
+  }
+
+  try {
+    await navigator.clipboard.writeText(
+      publicShareUrl.value,
+    )
+    publicShareSuccess.value = 'リンクをコピーしました'
+    publicShareError.value = ''
+  } catch (error) {
+    console.error(error)
+    publicShareError.value =
+      'コピーできませんでした。リンクを長押しでコピーしてください。'
+  }
 }
 
 function goBack() {
@@ -945,6 +1145,21 @@ onMounted(loadCustomer)
               <strong>うにょ履歴を見る</strong>
             </span>
           </button>
+
+          <button
+            type="button"
+            class="action-button action-button--public"
+            @click="openPublicShare"
+          >
+            <span class="action-icon">QR</span>
+
+            <span class="action-copy">
+              <strong>個人QRコード</strong>
+              <small v-if="publicProfileButtonLabel">
+                {{ publicProfileButtonLabel }}
+              </small>
+            </span>
+          </button>
         </div>
       </section>
 
@@ -1350,6 +1565,124 @@ onMounted(loadCustomer)
 
         </section>
       </div>
+
+      <div
+        v-if="isPublicShareOpen"
+        class="modal-backdrop"
+        @click.self="closePublicShare"
+      >
+        <section class="transaction-modal public-share-modal">
+          <div class="selected-action-header">
+            <div>
+              <p class="modal-eyebrow">
+                Otomodachi profile QR
+              </p>
+              <h3>個人QRコード</h3>
+            </div>
+
+            <button
+              type="button"
+              class="close-button"
+              aria-label="閉じる"
+              :disabled="isPublicShareSaving"
+              @click="closePublicShare"
+            >
+              ×
+            </button>
+          </div>
+
+          <div
+            v-if="isPublicShareLoading"
+            class="state-message"
+          >
+            個人QRコードを確認しています...
+          </div>
+
+          <div
+            v-else
+            class="public-share-body"
+          >
+            <div
+              v-if="hasPublicProfile && publicQrDataUrl"
+              class="public-qr-area"
+            >
+              <div class="public-qr-frame">
+                <img
+                  :src="publicQrDataUrl"
+                  alt="個人QRコード"
+                >
+              </div>
+
+              <button
+                type="button"
+                class="public-url-button"
+                @click="copyPublicShareUrl"
+              >
+                {{ publicShareUrl }}
+              </button>
+            </div>
+
+            <div
+              v-else
+              class="public-share-empty"
+            >
+              <strong>まだ公開されていません</strong>
+              <span>
+                発行すると、専用リンクとQRコードが作成され、そこからうにょデータを確認できるようになります。
+              </span>
+              <span class="public-share-consent">
+                発行前に、うにょデータが外部閲覧可能になる可能性があることをお客様へ説明し、同意を得てもらいましょう
+              </span>
+            </div>
+
+            <p
+              v-if="publicShareError"
+              class="transaction-message transaction-message--error"
+            >
+              {{ publicShareError }}
+            </p>
+
+            <p
+              v-if="publicShareSuccess"
+              class="transaction-message transaction-message--success"
+            >
+              {{ publicShareSuccess }}
+            </p>
+
+            <div class="public-share-actions">
+              <button
+                v-if="!hasPublicProfile"
+                type="button"
+                class="save-transaction-button public-share-primary"
+                :disabled="isPublicShareSaving"
+                @click="enablePublicShare"
+              >
+                個人QRコードを発行
+              </button>
+
+              <template v-else>
+                <button
+                  type="button"
+                  class="save-transaction-button public-share-primary"
+                  :disabled="isPublicShareSaving"
+                  @click="copyPublicShareUrl"
+                >
+                  リンクをコピー
+                </button>
+
+                <button
+                  type="button"
+                  class="public-share-danger"
+                  :disabled="isPublicShareSaving"
+                  @click="disablePublicShare"
+                >
+                  公開を停止
+                </button>
+              </template>
+            </div>
+          </div>
+        </section>
+      </div>
     </template>
   </main>
 </template>
@@ -1682,6 +2015,12 @@ h1 {
   background: var(--color-primary-soft);
 }
 
+.action-button--public .action-icon {
+  color: #7a4d00;
+  background: #fff5d8;
+  font-size: 16px;
+}
+
 .action-copy {
   min-width: 0;
 }
@@ -1689,6 +2028,15 @@ h1 {
 .action-copy strong {
   display: block;
   font-size: 18px;
+}
+
+.action-copy small {
+  display: block;
+  margin-top: 4px;
+
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 750;
 }
 
 .modal-backdrop {
@@ -1725,6 +2073,120 @@ h1 {
 
  background: var(--color-surface);
  border-radius: 28px;
+}
+
+.public-share-modal {
+  width: min(100%, 480px);
+}
+
+.public-share-body {
+  display: grid;
+  gap: 14px;
+}
+
+.public-share-note {
+  margin: 0;
+
+  color: var(--color-muted);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.7;
+}
+
+.public-qr-area {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+}
+
+.public-qr-frame {
+  padding: 14px;
+
+  background: white;
+  border: 1px solid rgb(23 50 77 / 10%);
+  border-radius: 22px;
+
+  box-shadow:
+    0 5px 13px rgb(15 34 53 / 7%),
+    0 14px 30px rgb(15 34 53 / 7%);
+}
+
+.public-qr-frame img {
+  display: block;
+
+  width: min(58vw, 260px);
+  height: auto;
+}
+
+.public-url-button {
+  width: 100%;
+  padding: 12px 14px;
+
+  color: var(--color-primary);
+  text-align: left;
+  overflow-wrap: anywhere;
+
+  background: var(--color-primary-soft);
+  border: 1px solid rgb(23 50 77 / 10%);
+  border-radius: 14px;
+
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.public-share-empty {
+  display: grid;
+  gap: 8px;
+  padding: 20px;
+
+  background: #f8fafc;
+  border: 1px solid var(--color-border);
+  border-radius: 18px;
+
+  text-align: center;
+}
+
+.public-share-empty strong {
+  font-size: 18px;
+}
+
+.public-share-empty span {
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.public-share-empty .public-share-consent {
+  color: #9a3039;
+  font-weight: 850;
+}
+
+.public-share-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.public-share-primary {
+  background: var(--color-primary);
+  box-shadow: 0 10px 24px rgb(23 55 84 / 18%);
+}
+
+.public-share-danger {
+  min-height: 52px;
+  padding: 12px 18px;
+
+  color: #a62c36;
+  background: #fff0f1;
+  border: 1px solid rgb(166 44 54 / 14%);
+  border-radius: 16px;
+
+  font-size: 16px;
+  font-weight: 850;
+}
+
+.public-share-danger:disabled {
+  cursor: wait;
+  opacity: 0.5;
 }
 
 

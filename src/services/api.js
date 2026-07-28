@@ -333,6 +333,7 @@ function normalizeCustomer(customer) {
     memo: String(customer.memo || ''),
     visitCount: Number(customer.visitCount || 0),
     firstVisit: String(customer.firstVisit || ''),
+    profilePublic: Boolean(customer.profilePublic),
     normalizedCustomerCode: normalizeCustomerCode(
       customer.customerCode,
     ).replace(/^0+/, ''),
@@ -939,6 +940,37 @@ export function createCustomer(
     updateTodayActiveCustomersCacheFromNewCustomer(
       result,
     )
+
+    return result
+  })
+}
+
+export function getCustomerPublicProfile(customerCode) {
+  return apiGet('getCustomerPublicProfile', {
+    customerCode,
+  })
+}
+
+export function updateCustomerProfilePublic(
+  customerCode,
+  profilePublic,
+) {
+  return apiGet('updateCustomerProfilePublic', {
+    customerCode,
+    profilePublic,
+  }).then((result) => {
+    const cachedCustomer = getCachedCustomer(
+      result.customerCode || customerCode,
+    )
+
+    if (cachedCustomer) {
+      cacheCustomer({
+        ...cachedCustomer,
+        profilePublic: Boolean(
+          result.profilePublic,
+        ),
+      })
+    }
 
     return result
   })
