@@ -17,6 +17,10 @@ export default {
       })
     }
 
+    if (url.pathname.startsWith('/public/customer-history/')) {
+      return publicCustomerHistory_(url, env)
+    }
+
     if (url.pathname.startsWith('/public/customer/')) {
       return publicCustomerPage_(url, env)
     }
@@ -363,6 +367,9 @@ async function publicCustomerPage_(requestUrl, env) {
   const lastVisit = escapeHtml_(
     customer.lastVisit || '記録なし',
   )
+  const publicTokenJson = JSON.stringify(
+    normalizePublicToken_(token),
+  )
 
   return new Response(
     `<!doctype html>
@@ -370,7 +377,7 @@ async function publicCustomerPage_(requestUrl, env) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${customerName} | おともだちポーカー</title>
+  <title>おともだちプロフィール</title>
   <link rel="icon" type="image/png" href="/otopo.png">
   <style>
     :root {
@@ -401,6 +408,18 @@ async function publicCustomerPage_(requestUrl, env) {
       gap: 16px;
     }
 
+    .page-header {
+      padding: 0 8px;
+    }
+
+    .page-header h1 {
+      margin: 0;
+      color: #101923;
+      font-size: clamp(26px, 7vw, 34px);
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
     .card {
       padding: 24px;
       background: rgb(255 255 255 / 88%);
@@ -418,7 +437,7 @@ async function publicCustomerPage_(requestUrl, env) {
       letter-spacing: .12em;
     }
 
-    h1 {
+    .customer-name {
       margin: 0;
       font-size: clamp(32px, 9vw, 46px);
       line-height: 1.12;
@@ -510,13 +529,147 @@ async function publicCustomerPage_(requestUrl, env) {
       line-height: 1.7;
       text-align: center;
     }
+
+    .history-button {
+      width: 100%;
+      min-height: 58px;
+      border: 0;
+      border-radius: 18px;
+      color: white;
+      background: #d4238a;
+      box-shadow: 0 12px 28px rgb(212 35 138 / 20%);
+      font: inherit;
+      font-size: 16px;
+      font-weight: 850;
+      cursor: pointer;
+      transition:
+        transform 160ms ease,
+        box-shadow 160ms ease,
+        opacity 160ms ease;
+    }
+
+    .history-button:active {
+      transform: translateY(1px) scale(.99);
+    }
+
+    .history-button:disabled {
+      cursor: wait;
+      opacity: .72;
+    }
+
+    .history-panel {
+      display: none;
+      padding: 20px;
+      background: rgb(255 255 255 / 82%);
+      border: 1px solid rgb(23 50 77 / 10%);
+      border-radius: 24px;
+      box-shadow: 0 18px 42px rgb(15 34 53 / 10%);
+      backdrop-filter: blur(12px);
+    }
+
+    .history-panel.is-visible {
+      display: block;
+    }
+
+    .history-status {
+      margin: 0;
+      color: #667483;
+      font-size: 13px;
+      font-weight: 750;
+      line-height: 1.6;
+      text-align: center;
+    }
+
+    .history-status.is-error {
+      color: #9a3039;
+    }
+
+    .history-chart-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 12px;
+    }
+
+    .history-chart-header span,
+    .history-chart-header strong {
+      display: block;
+    }
+
+    .history-chart-header span {
+      color: #758291;
+      font-size: 11px;
+      font-weight: 750;
+    }
+
+    .history-chart-header strong {
+      margin-top: 3px;
+      color: #173754;
+      font-size: 24px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .history-chart {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .chart-axis {
+      stroke: rgb(23 50 77 / 26%);
+      stroke-width: 1.5;
+    }
+
+    .chart-grid-line {
+      stroke: rgb(23 50 77 / 9%);
+      stroke-width: 1;
+      stroke-dasharray: 5 6;
+    }
+
+    .chart-line {
+      fill: none;
+      stroke: #173754;
+      stroke-width: 4;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .chart-line--dense {
+      stroke-width: 3;
+    }
+
+    .chart-point {
+      fill: white;
+      stroke: #173754;
+      stroke-width: 4;
+    }
+
+    .chart-value-label {
+      fill: #10233a;
+      font-size: 10px;
+      font-weight: 850;
+      paint-order: stroke;
+      stroke: white;
+      stroke-linejoin: round;
+      stroke-width: 4px;
+    }
+
+    .chart-time-label {
+      fill: #758291;
+      font-size: 9px;
+      font-weight: 700;
+    }
   </style>
 </head>
 <body>
   <main>
+    <header class="page-header">
+      <h1>おともだちプロフィール</h1>
+    </header>
     <section class="card">
       <span class="code">${code}</span>
-      <h1>${customerName}<span class="suffix">さん</span></h1>
+      <h2 class="customer-name">${customerName}<span class="suffix">さん</span></h2>
       <div class="balance">
         <span>現在のうにょ</span>
         <strong>${balance}</strong>
@@ -526,10 +679,371 @@ async function publicCustomerPage_(requestUrl, env) {
     <section class="meta">
       <div><span>最終来店日</span><strong>${lastVisit}</strong></div>
     </section>
+    <button
+      class="history-button"
+      type="button"
+      data-history-button
+      aria-expanded="false"
+      aria-controls="history-panel"
+    >
+      うにょ履歴を見る
+    </button>
+    <section
+      id="history-panel"
+      class="history-panel"
+      data-history-panel
+      aria-live="polite"
+    >
+      <p class="history-status" data-history-status>読み込み中...</p>
+    </section>
     <p class="notice">
       公開停止したい場合はお店のスタッフにお願いしてください！
     </p>
   </main>
+  <script>
+    const publicToken = ${publicTokenJson}
+    const currentBalance = Number(${JSON.stringify(Number(customer.currentBalance || 0))})
+    const historyButton = document.querySelector('[data-history-button]')
+    const historyPanel = document.querySelector('[data-history-panel]')
+    const historyStatus = document.querySelector('[data-history-status]')
+
+    const chartWidth = 640
+    const chartHeight = 230
+    const chartPaddingX = 34
+    const chartPaddingY = 24
+    const chartLineOnlyThreshold = 28
+
+    let historyLoaded = false
+
+    historyButton.addEventListener('click', async () => {
+      historyPanel.classList.add('is-visible')
+      historyButton.setAttribute('aria-expanded', 'true')
+
+      if (historyLoaded) {
+        return
+      }
+
+      historyButton.disabled = true
+      historyButton.textContent = '読み込み中...'
+      historyStatus.classList.remove('is-error')
+      historyStatus.textContent = '読み込み中...'
+
+      try {
+        const response = await fetch(
+          '/public/customer-history/' + encodeURIComponent(publicToken),
+          {
+            headers: {
+              accept: 'application/json',
+            },
+          },
+        )
+        const result = await response.json()
+
+        if (!result.success) {
+          throw new Error(result.error || '履歴を読み込めませんでした')
+        }
+
+        renderHistory(Array.isArray(result.data) ? result.data : [])
+        historyLoaded = true
+        historyButton.disabled = false
+        historyButton.textContent = 'うにょ履歴を表示中'
+      } catch (error) {
+        historyStatus.classList.add('is-error')
+        historyStatus.textContent =
+          error.message || '履歴を読み込めませんでした'
+        historyButton.disabled = false
+        historyButton.textContent = 'もう一度読み込む'
+      }
+    })
+
+    function renderHistory(history) {
+      const transactions = history
+        .filter((transaction) =>
+          Number.isFinite(Number(transaction.balanceAfter)),
+        )
+        .reverse()
+
+      if (transactions.length === 0) {
+        historyPanel.innerHTML =
+          '<p class="history-status">履歴はありません</p>'
+        return
+      }
+
+      historyPanel.innerHTML =
+        '<div class="history-chart-header"><div><span>残高推移</span><strong>' +
+        formatNumber(currentBalance) +
+        '</strong></div></div>'
+
+      const points = buildChartPoints(transactions)
+      const svg = svgElement('svg', {
+        class: 'history-chart',
+        viewBox: '0 0 ' + chartWidth + ' ' + chartHeight,
+        role: 'img',
+        'aria-label': 'うにょ残高の推移グラフ',
+      })
+
+      svg.append(
+        svgElement('line', {
+          x1: chartPaddingX,
+          y1: chartPaddingY,
+          x2: chartPaddingX,
+          y2: chartHeight - chartPaddingY,
+          class: 'chart-axis',
+        }),
+        svgElement('line', {
+          x1: chartPaddingX,
+          y1: chartHeight - chartPaddingY,
+          x2: chartWidth - chartPaddingX,
+          y2: chartHeight - chartPaddingY,
+          class: 'chart-axis',
+        }),
+        svgElement('line', {
+          x1: chartPaddingX,
+          y1: chartPaddingY,
+          x2: chartWidth - chartPaddingX,
+          y2: chartPaddingY,
+          class: 'chart-grid-line',
+        }),
+        svgElement('line', {
+          x1: chartPaddingX,
+          y1: chartHeight / 2,
+          x2: chartWidth - chartPaddingX,
+          y2: chartHeight / 2,
+          class: 'chart-grid-line',
+        }),
+      )
+
+      if (points.length > 1) {
+        svg.append(
+          svgElement('polyline', {
+            points: points.map((point) => point.x + ',' + point.y).join(' '),
+            class:
+              'chart-line' +
+              (points.length > chartLineOnlyThreshold
+                ? ' chart-line--dense'
+                : ''),
+          }),
+        )
+      }
+
+      if (points.length <= chartLineOnlyThreshold) {
+        for (const point of points) {
+          const group = svgElement('g', {})
+          const title = svgElement('title', {})
+          title.textContent =
+            point.timestamp + '・' + formatNumber(point.balance) + 'うにょ'
+
+          group.append(
+            svgElement('circle', {
+              cx: point.x,
+              cy: point.y,
+              r: 6,
+              class: 'chart-point',
+            }),
+            title,
+          )
+          svg.append(group)
+        }
+      }
+
+      for (const label of getValueLabels(points)) {
+        const text = svgElement('text', {
+          x: label.x,
+          y: label.labelY,
+          'text-anchor': label.anchor,
+          class: 'chart-value-label',
+        })
+        text.textContent = label.text
+        svg.append(text)
+      }
+
+      for (const label of getDateLabels(points)) {
+        const text = svgElement('text', {
+          x: label.x,
+          y: chartHeight - 5,
+          'text-anchor': label.anchor,
+          class: 'chart-time-label',
+        })
+        text.textContent = label.text
+        svg.append(text)
+      }
+
+      historyPanel.append(svg)
+    }
+
+    function buildChartPoints(transactions) {
+      const balances = transactions.map((transaction) =>
+        Number(transaction.balanceAfter || 0),
+      )
+      const minimumBalance = Math.min(0, ...balances)
+      let maximumBalance = Math.max(...balances)
+
+      if (maximumBalance === minimumBalance) {
+        maximumBalance += 1
+      }
+
+      const usableWidth = chartWidth - chartPaddingX * 2
+      const usableHeight = chartHeight - chartPaddingY * 2
+      const balanceRange = maximumBalance - minimumBalance
+
+      return transactions.map((transaction, index) => {
+        const x =
+          transactions.length === 1
+            ? chartWidth / 2
+            : chartPaddingX +
+              (index / (transactions.length - 1)) *
+                usableWidth
+        const balance = Number(transaction.balanceAfter || 0)
+        const y =
+          chartHeight -
+          chartPaddingY -
+          ((balance - minimumBalance) / balanceRange) *
+            usableHeight
+
+        return {
+          x,
+          y,
+          balance,
+          timestamp: String(transaction.timestamp || ''),
+        }
+      })
+    }
+
+    function getDateLabels(points) {
+      const candidates = []
+      const labels = []
+      let lastDate = ''
+
+      for (const point of points) {
+        const dateText = formatChartDate(point.timestamp)
+
+        if (dateText && dateText !== lastDate) {
+          candidates.push({
+            ...point,
+            anchor: getChartTextAnchor(point.x),
+            text: dateText,
+          })
+
+          lastDate = dateText
+        }
+      }
+
+      const minimumGap = getChartDateLabelGap(points.length)
+      let lastLabelX = Number.NEGATIVE_INFINITY
+
+      for (const candidate of candidates) {
+        if (candidate.x - lastLabelX < minimumGap) {
+          continue
+        }
+
+        labels.push(candidate)
+        lastLabelX = candidate.x
+      }
+
+      return labels
+    }
+
+    function getValueLabels(points) {
+      const labels = []
+      let lastLabelX = Number.NEGATIVE_INFINITY
+      const minimumGap = getChartValueLabelGap(points.length)
+
+      for (const point of points) {
+        if (point.x - lastLabelX < minimumGap) {
+          continue
+        }
+
+        labels.push({
+          ...point,
+          anchor: getChartTextAnchor(point.x),
+          labelY: getChartValueLabelY(point),
+          text: formatNumber(point.balance),
+        })
+
+        lastLabelX = point.x
+      }
+
+      return labels
+    }
+
+    function getChartTextAnchor(x) {
+      if (x <= chartPaddingX + 4) {
+        return 'start'
+      }
+
+      if (x >= chartWidth - chartPaddingX - 4) {
+        return 'end'
+      }
+
+      return 'middle'
+    }
+
+    function getChartDateLabelGap(pointCount) {
+      if (pointCount > 48) {
+        return 94
+      }
+
+      if (pointCount > chartLineOnlyThreshold) {
+        return 78
+      }
+
+      return 54
+    }
+
+    function getChartValueLabelGap(pointCount) {
+      if (pointCount > 48) {
+        return 170
+      }
+
+      if (pointCount > chartLineOnlyThreshold) {
+        return 136
+      }
+
+      return 92
+    }
+
+    function getChartValueLabelY(point) {
+      const labelAboveY = point.y - 11
+
+      if (labelAboveY < 11) {
+        return point.y + 20
+      }
+
+      return labelAboveY
+    }
+
+    function formatChartDate(timestamp) {
+      const datePart = String(timestamp || '').split(' ')[0] || ''
+      const dateParts = datePart.replaceAll('-', '/').split('/')
+
+      if (dateParts.length < 3) {
+        return datePart
+      }
+
+      return Number(dateParts[1]) + '/' + Number(dateParts[2])
+    }
+
+    function formatNumber(value) {
+      const number = Number(value || 0)
+
+      return Number.isFinite(number)
+        ? number.toLocaleString('ja-JP')
+        : '0'
+    }
+
+    function svgElement(name, attributes) {
+      const element = document.createElementNS(
+        'http://www.w3.org/2000/svg',
+        name,
+      )
+
+      for (const [key, value] of Object.entries(attributes)) {
+        element.setAttribute(key, String(value))
+      }
+
+      return element
+    }
+  </script>
 </body>
 </html>`,
     {
@@ -539,6 +1053,40 @@ async function publicCustomerPage_(requestUrl, env) {
       },
     },
   )
+}
+
+async function publicCustomerHistory_(requestUrl, env) {
+  const token = getPublicCustomerHistoryTokenFromPath_(
+    requestUrl.pathname,
+  )
+
+  if (!token) {
+    return jsonResponse_(
+      {
+        success: false,
+        error: 'この人知りません！',
+      },
+      404,
+    )
+  }
+
+  try {
+    return jsonResponse_(
+      await getPublicCustomerHistoryByToken_(env, token),
+    )
+  } catch (error) {
+    console.error(error)
+
+    return jsonResponse_(
+      {
+        success: false,
+        error:
+          error.message ||
+          '履歴を読み込めませんでした',
+      },
+      500,
+    )
+  }
 }
 
 async function handleApi_(requestUrl, env, options = {}) {
@@ -805,6 +1353,45 @@ async function updateCustomerPublicProfile_(
 }
 
 async function getPublicCustomerByToken_(env, publicToken) {
+  const codeResult = await getPublicCustomerCodeByToken_(
+    env,
+    publicToken,
+  )
+
+  if (!codeResult.success) {
+    return codeResult
+  }
+
+  return fetchAppsScriptJson_(
+    {
+      action: 'getCustomer',
+      customerCode: codeResult.data,
+    },
+    env,
+  )
+}
+
+async function getPublicCustomerHistoryByToken_(env, publicToken) {
+  const codeResult = await getPublicCustomerCodeByToken_(
+    env,
+    publicToken,
+  )
+
+  if (!codeResult.success) {
+    return codeResult
+  }
+
+  return fetchAppsScriptJson_(
+    {
+      action: 'getHistory',
+      customerCode: codeResult.data,
+      period: 'all',
+    },
+    env,
+  )
+}
+
+async function getPublicCustomerCodeByToken_(env, publicToken) {
   const token = normalizePublicToken_(publicToken)
 
   if (!token) {
@@ -835,13 +1422,10 @@ async function getPublicCustomerByToken_(env, publicToken) {
     }
   }
 
-  return fetchAppsScriptJson_(
-    {
-      action: 'getCustomer',
-      customerCode: row.customer_code,
-    },
-    env,
-  )
+  return {
+    success: true,
+    data: String(row.customer_code || ''),
+  }
 }
 
 function getQrDatabase_(env) {
@@ -1003,6 +1587,19 @@ function publicCustomerErrorPage_(message) {
 
 function getPublicCustomerTokenFromPath_(pathname) {
   const prefix = '/public/customer/'
+  const rawToken = pathname.startsWith(prefix)
+    ? pathname.slice(prefix.length).split('/')[0]
+    : ''
+
+  try {
+    return decodeURIComponent(rawToken)
+  } catch {
+    return ''
+  }
+}
+
+function getPublicCustomerHistoryTokenFromPath_(pathname) {
+  const prefix = '/public/customer-history/'
   const rawToken = pathname.startsWith(prefix)
     ? pathname.slice(prefix.length).split('/')[0]
     : ''
