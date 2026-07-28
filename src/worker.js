@@ -358,9 +358,6 @@ async function publicCustomerPage_(requestUrl, env) {
   const lastVisit = escapeHtml_(
     customer.lastVisit || '記録なし',
   )
-  const updatedAt = escapeHtml_(
-    customer.updatedAt || '',
-  )
 
   return new Response(
     `<!doctype html>
@@ -449,9 +446,9 @@ async function publicCustomerPage_(requestUrl, env) {
       margin-top: 22px;
       padding: 18px;
       color: white;
-      background: #173754;
+      background: #d4238a;
       border-radius: 24px;
-      box-shadow: 0 12px 28px rgb(23 55 84 / 20%);
+      box-shadow: 0 12px 28px rgb(212 35 138 / 22%);
     }
 
     .balance span,
@@ -523,7 +520,6 @@ async function publicCustomerPage_(requestUrl, env) {
     </section>
     <section class="meta">
       <div><span>最終来店日</span><strong>${lastVisit}</strong></div>
-      <div><span>更新</span><strong>${updatedAt}</strong></div>
     </section>
     <p class="notice">
       公開停止したい場合はお店のスタッフにお願いしてください！
