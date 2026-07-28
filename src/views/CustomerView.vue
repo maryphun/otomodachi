@@ -1998,6 +1998,48 @@ h1 {
   background: #e8f7ef;
 }
 
+@media (min-width: 561px) and (max-width: 1100px) and (max-height: 900px) {
+  .transaction-modal {
+    padding: 18px;
+  }
+
+  .selected-action-header {
+    margin-bottom: 14px;
+  }
+
+  .transaction-form {
+    gap: 12px;
+  }
+
+  .amount-display {
+    padding: 15px;
+  }
+
+  .amount-display strong {
+    margin-top: 5px;
+    font-size: clamp(36px, 7vw, 52px);
+  }
+
+  .balance-preview {
+    padding: 11px 13px;
+  }
+
+  .amount-number-pad {
+    gap: 8px;
+  }
+
+  .amount-key {
+    min-height: 54px;
+    border-radius: 16px;
+    font-size: 21px;
+  }
+
+  .save-transaction-button {
+    min-height: 52px;
+    padding-block: 11px;
+  }
+}
+
 .history-list {
   display: grid;
   gap: 10px;
