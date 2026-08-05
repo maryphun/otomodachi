@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "preview:worker": "npm run build && npx wrangler dev --local --port 8788",
+    "preview:worker": "npm run build && npx wrangler dev --remote --port 8788",
     "lint": "run-s \"lint:*\"",
     "lint:oxlint": "oxlint . --fix",
     "lint:eslint": "eslint . --fix --cache",

@@ -30,6 +30,7 @@ const DEFAULT_API_TIMEOUT_MS = 15 * 1000
 const WRITE_API_TIMEOUT_MS = 45 * 1000
 const WRITE_ACTIONS = new Set([
   'addTransaction',
+  'enterCustomer',
   'checkoutCustomer',
   'createCustomer',
   'updateCustomerProfilePublic',
@@ -56,6 +57,22 @@ function buildApiProblemMessage(
   mainMessage,
   timeoutMs,
 ) {
+  if (
+    action === 'enterCustomer' &&
+    String(mainMessage || '').includes(
+      'Unknown action: enterCustomer',
+    )
+  ) {
+    return [
+      'Apps Script側に入店機能がまだデプロイされていません。',
+      '',
+      '必要な作業:',
+      '- appscript-full/Webapp用.txt の内容を Apps Script の Webapp用.gs に貼り替える',
+      '- Apps Script を新しいバージョンでデプロイする',
+      '- APPS_SCRIPT_URL がその新しい /exec URL を向いているか確認する',
+    ].join('\n')
+  }
+
   const lines = [
     mainMessage,
     '',
@@ -334,6 +351,7 @@ function normalizeCustomer(customer) {
     visitCount: Number(customer.visitCount || 0),
     firstVisit: String(customer.firstVisit || ''),
     profilePublic: Boolean(customer.profilePublic),
+    activeToday: Boolean(customer.activeToday),
     normalizedCustomerCode: normalizeCustomerCode(
       customer.customerCode,
     ).replace(/^0+/, ''),
@@ -421,6 +439,47 @@ export function getCachedCustomers() {
   return cached.data
 }
 
+function applyTodayActiveCacheToCustomer(customer) {
+  if (!customer?.customerCode) {
+    return customer
+  }
+
+  const cached = readTodayActiveCustomersCacheRecord()
+
+  if (!cached) {
+    return customer
+  }
+
+  const activeCustomer = cached.data.find((item) =>
+    customerCodesMatch(
+      item.customerCode,
+      customer.customerCode,
+    ),
+  )
+  const nextCustomer = {
+    ...customer,
+    activeToday: Boolean(activeCustomer),
+  }
+
+  if (activeCustomer) {
+    const activeBalance = Number(
+      activeCustomer.currentBalance,
+    )
+
+    if (Number.isFinite(activeBalance)) {
+      nextCustomer.currentBalance = activeBalance
+    }
+
+    if (activeCustomer.date) {
+      nextCustomer.lastVisit = String(
+        activeCustomer.date,
+      ).replaceAll('-', '/')
+    }
+  }
+
+  return nextCustomer
+}
+
 export function getCachedCustomer(customerCode) {
   const cached = readCache(
     getCustomerDetailCacheKey(customerCode),
@@ -428,15 +487,17 @@ export function getCachedCustomer(customerCode) {
   )
 
   if (cached?.data) {
-    return cached.data
+    return applyTodayActiveCacheToCustomer(cached.data)
   }
 
-  return getCachedCustomers().find((customer) =>
+  const customer = getCachedCustomers().find((item) =>
     customerCodesMatch(
-      customer.customerCode,
+      item.customerCode,
       customerCode,
     ),
   )
+
+  return applyTodayActiveCacheToCustomer(customer)
 }
 
 export function getCachedHistory(
@@ -719,6 +780,54 @@ function updateTodayActiveCustomersCacheFromTransaction(
   writeTodayActiveCustomersCache(customers)
 }
 
+function updateTodayActiveCustomersCacheFromEntry(entry) {
+  const customerCode = normalizeCustomerCode(
+    entry?.customerCode,
+  )
+  const newBalance = Number(entry?.newBalance)
+
+  if (!customerCode || !Number.isFinite(newBalance)) {
+    return
+  }
+
+  const cached = readTodayActiveCustomersCacheRecord()
+  const customers = cached ? [...cached.data] : []
+  const index = customers.findIndex((customer) =>
+    customerCodesMatch(
+      customer.customerCode,
+      customerCode,
+    ),
+  )
+  const existing = index >= 0 ? customers[index] : null
+  const cachedCustomer = getCachedCustomer(customerCode)
+  const nextCustomer = {
+    ...existing,
+    customerCode,
+    customerName: String(
+      entry.customerName ||
+        existing?.customerName ||
+        cachedCustomer?.customerName ||
+        '',
+    ),
+    date: String(entry.timestamp || '').slice(0, 10),
+    balanceBefore: newBalance,
+    currentBalance: newBalance,
+    chipChange: Number(existing?.chipChange || 0),
+    movementCount: Number(existing?.movementCount || 0),
+    lastMovementAmount: Number(
+      existing?.lastMovementAmount || 0,
+    ),
+  }
+
+  if (index >= 0) {
+    customers[index] = nextCustomer
+  } else {
+    customers.push(nextCustomer)
+  }
+
+  writeTodayActiveCustomersCache(customers)
+}
+
 function updateTodayActiveCustomersCacheFromNewCustomer(
   customer,
 ) {
@@ -836,7 +945,9 @@ export function getCustomer(customerCode) {
   )
 
   if (cached?.data) {
-    return Promise.resolve(cached.data)
+    return Promise.resolve(
+      applyTodayActiveCacheToCustomer(cached.data),
+    )
   }
 
   if (!customerRequests.has(normalizedCode)) {
@@ -862,6 +973,29 @@ export function getCustomer(customerCode) {
   }
 
   return customerRequests.get(normalizedCode)
+}
+
+export function getCustomerPresence(customerCode) {
+  return apiGet('getCustomerPresence', {
+    customerCode,
+  }).then((result) => {
+    const activeToday = Boolean(result.activeToday)
+    const cachedCustomer = getCachedCustomer(
+      result.customerCode || customerCode,
+    )
+
+    if (cachedCustomer) {
+      cacheCustomer({
+        ...cachedCustomer,
+        activeToday,
+      })
+    }
+
+    return {
+      ...result,
+      activeToday,
+    }
+  })
 }
 
 export function getHistory(
@@ -908,6 +1042,16 @@ export function addTransaction(
     updateTodayActiveCustomersCacheFromTransaction(
       result,
     )
+
+    return result
+  })
+}
+
+export function enterCustomer(customerCode) {
+  return apiGet('enterCustomer', {
+    customerCode,
+  }).then((result) => {
+    updateTodayActiveCustomersCacheFromEntry(result)
 
     return result
   })

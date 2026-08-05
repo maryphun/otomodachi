@@ -11,6 +11,12 @@
       "database_name": "otomodachi-public-profiles",
       "database_id": "b763968e-2f79-4d33-96c3-6990eeea2cd8",
       "migrations_dir": "migrations"
+    },
+    {
+      "binding": "ATTENDANCE_DB",
+      "database_name": "otomodachi-current-active-customer",
+      "database_id": "e0d44928-aad0-4e73-8c8d-2b2f24b6ad19",
+      "migrations_dir": "migrations-attendance"
     }
   ],
   "assets": {

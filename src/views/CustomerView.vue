@@ -5,6 +5,7 @@ import QRCode from 'qrcode'
 import {
   computed,
   nextTick,
+  onBeforeUnmount,
   onMounted,
   ref,
 } from 'vue'
@@ -16,9 +17,11 @@ import {
   checkoutCustomer,
   clearCustomerHistoryCache,
   clearTodayHistoryCache,
+  enterCustomer,
   getCachedCustomer,
   getCachedHistory,
   getCustomer,
+  getCustomerPresence,
   getCustomerPublicProfile,
   getHistory,
   updateCustomerProfilePublic,
@@ -33,18 +36,22 @@ import {
 
 
 const historyChartScroll = ref(null)
+const historyChartCard = ref(null)
 
 const route = useRoute()
 const router = useRouter()
 
 const customer = ref(null)
 const history = ref([])
+const presenceActiveToday = ref(null)
 
 const selectedAction = ref('')
 
 const isLoading = ref(true)
 const isHistoryLoading = ref(false)
 const isSavingTransaction = ref(false)
+const isEntrySaving = ref(false)
+const isHistoryChartExpanded = ref(false)
 const isPublicShareOpen = ref(false)
 const isPublicShareLoading = ref(false)
 const isPublicShareSaving = ref(false)
@@ -165,6 +172,14 @@ const canSaveTransaction = computed(() => {
   )
 })
 
+const isCustomerActiveToday = computed(() => {
+  if (presenceActiveToday.value !== null) {
+    return presenceActiveToday.value
+  }
+
+  return Boolean(customer.value?.activeToday)
+})
+
 const hasOldLastVisit = computed(() => {
   return isLastVisitOlderThanThreeMonths(
     customer.value?.lastVisit,
@@ -224,13 +239,25 @@ const chartPaddingY = 24
 const chartLineOnlyThreshold = 28
 
 const chartTransactions = computed(() => {
-  return [...history.value]
+  const transactions = [...history.value]
     .filter((transaction) => {
       return Number.isFinite(
         Number(transaction.balanceAfter),
       )
     })
     .reverse()
+
+  const dailyFinalTransactions = new Map()
+
+  transactions.forEach((transaction, index) => {
+    const dateKey =
+      getChartDateKey(transaction.timestamp) ||
+      `transaction-${index}`
+
+    dailyFinalTransactions.set(dateKey, transaction)
+  })
+
+  return [...dailyFinalTransactions.values()]
 })
 
 const chartMinimumBalance = computed(() => {
@@ -302,6 +329,9 @@ const chartPoints = computed(() => {
       x,
       y,
       balance,
+      dateKey: getChartDateKey(
+        transaction.timestamp,
+      ),
       timestamp: transaction.timestamp,
       transactionId: transaction.transactionId,
     }
@@ -319,11 +349,7 @@ const isDenseChart = computed(() => {
 })
 
 const visibleChartPoints = computed(() => {
-  if (isDenseChart.value) {
-    return []
-  }
-
-  return chartPoints.value
+  return []
 })
 
 const chartAxisLabels = computed(() => {
@@ -374,27 +400,114 @@ const chartValueLabels = computed(() => {
     return []
   }
 
-  const labels = []
-  let lastLabelX = Number.NEGATIVE_INFINITY
-  const minimumGap = getChartValueLabelGap(points.length)
+  const peakCandidates = []
+  const peakLabelGap = getChartPeakLabelGap(
+    points.length,
+  )
 
-  for (const point of points) {
-    if (point.x - lastLabelX < minimumGap) {
+  for (let index = 0; index < points.length; index++) {
+    const point = points[index]
+
+    if (!isChartPeak(points, index)) {
       continue
     }
 
-    labels.push({
+    peakCandidates.push({
       ...point,
       anchor: getChartTextAnchor(point.x),
       labelY: getChartValueLabelY(point),
       text: formatNumber(point.balance),
     })
-
-    lastLabelX = point.x
   }
 
-  return labels
+  if (peakCandidates.length === 0) {
+    const highestPoint = getHighestChartPoint(points)
+
+    return highestPoint
+      ? [
+          {
+            ...highestPoint,
+            anchor: getChartTextAnchor(
+              highestPoint.x,
+            ),
+            labelY:
+              getChartValueLabelY(highestPoint),
+            text: formatNumber(
+              highestPoint.balance,
+            ),
+          },
+        ]
+      : []
+  }
+
+  return getSeparatedPeakLabels(
+    peakCandidates,
+    peakLabelGap,
+  )
 })
+
+function isChartPeak(points, index) {
+  if (points.length === 1) {
+    return true
+  }
+
+  const previous = points[index - 1]
+  const current = points[index]
+  const next = points[index + 1]
+
+  if (!previous) {
+    return current.balance > next.balance
+  }
+
+  if (!next) {
+    return current.balance > previous.balance
+  }
+
+  return (
+    current.balance >= previous.balance &&
+    current.balance >= next.balance &&
+    (current.balance > previous.balance ||
+      current.balance > next.balance)
+  )
+}
+
+function getHighestChartPoint(points) {
+  return points.reduce((highest, point) => {
+    if (!highest || point.balance > highest.balance) {
+      return point
+    }
+
+    return highest
+  }, null)
+}
+
+function getSeparatedPeakLabels(candidates, minimumGap) {
+  const selected = []
+  const byPeakHeight = [...candidates].sort(
+    (a, b) => b.balance - a.balance,
+  )
+
+  for (const candidate of byPeakHeight) {
+    const hasNearbyStrongerLabel = selected.some(
+      (label) =>
+        Math.abs(label.x - candidate.x) < minimumGap,
+    )
+
+    if (hasNearbyStrongerLabel) {
+      continue
+    }
+
+    selected.push(candidate)
+  }
+
+  return selected
+    .sort((a, b) => a.x - b.x)
+    .map((label) => ({
+      ...label,
+      anchor: getChartTextAnchor(label.x),
+      labelY: getChartValueLabelY(label),
+    }))
+}
 
 function getChartTextAnchor(x) {
   if (x <= chartPaddingX + 4) {
@@ -420,16 +533,16 @@ function getChartDateLabelGap(pointCount) {
   return 54
 }
 
-function getChartValueLabelGap(pointCount) {
+function getChartPeakLabelGap(pointCount) {
   if (pointCount > 48) {
-    return 170
+    return 96
   }
 
   if (pointCount > chartLineOnlyThreshold) {
-    return 136
+    return 82
   }
 
-  return 92
+  return 66
 }
 
 function getChartValueLabelY(point) {
@@ -442,10 +555,17 @@ function getChartValueLabelY(point) {
   return labelAboveY
 }
 
+function getChartDateKey(timestamp) {
+  return (
+    String(timestamp || '')
+      .trim()
+      .split(/[ T]/)[0]
+      ?.replaceAll('-', '/') || ''
+  )
+}
+
 function formatChartDate(timestamp) {
-  const value = String(timestamp || '')
-  const parts = value.split(' ')
-  const datePart = parts[0] || ''
+  const datePart = getChartDateKey(timestamp)
 
   const dateParts = datePart
     .replaceAll('-', '/')
@@ -460,6 +580,41 @@ function formatChartDate(timestamp) {
 
 async function scrollChartToNewest() {
   await nextTick()
+}
+
+function syncHistoryChartFullscreen() {
+  isHistoryChartExpanded.value =
+    document.fullscreenElement ===
+    historyChartCard.value
+}
+
+async function toggleHistoryChartFullscreen() {
+  const element = historyChartCard.value
+
+  if (!element) {
+    return
+  }
+
+  if (isHistoryChartExpanded.value) {
+    if (document.fullscreenElement === element) {
+      await document.exitFullscreen()
+      return
+    }
+
+    isHistoryChartExpanded.value = false
+    return
+  }
+
+  if (element.requestFullscreen) {
+    try {
+      await element.requestFullscreen()
+      return
+    } catch (error) {
+      console.warn(error)
+    }
+  }
+
+  isHistoryChartExpanded.value = true
 }
 
 function clearTransactionFeedback() {
@@ -501,6 +656,68 @@ function openTransaction(action) {
   amountText.value = ''
   transactionError.value = ''
   transactionSuccess.value = ''
+}
+
+async function enterCustomerToday() {
+  if (isSavingTransaction.value || !customer.value) {
+    return
+  }
+
+  transactionError.value = ''
+  transactionSuccess.value = ''
+
+  const confirmed = window.confirm(
+    'このボタンはうにょの引き出しなしで入店するお客様用です。入店しますか？',
+  )
+
+  if (!confirmed) {
+    return
+  }
+
+  const previousCustomer = {
+    ...customer.value,
+  }
+
+  isSavingTransaction.value = true
+  isEntrySaving.value = true
+
+  try {
+    const result = await enterCustomer(customerCode.value)
+
+    presenceActiveToday.value = true
+
+    customer.value = {
+      ...customer.value,
+      currentBalance: result.newBalance,
+      lastVisit: result.timestamp.slice(0, 10),
+      visitCount:
+        result.visitCount ?? customer.value.visitCount,
+      activeToday: true,
+    }
+
+    recordRecentCustomer(customer.value)
+    cacheCustomer(customer.value)
+  } catch (error) {
+    console.error(error)
+
+    customer.value = previousCustomer
+
+    window.alert(
+      error.message || '入店の記録に失敗しました',
+    )
+  } finally {
+    isEntrySaving.value = false
+    isSavingTransaction.value = false
+  }
+}
+
+function handleAttendanceAction() {
+  if (isCustomerActiveToday.value) {
+    openTransaction('checkout')
+    return
+  }
+
+  enterCustomerToday()
 }
 
 function closeAction() {
@@ -779,7 +996,36 @@ function getBalanceBefore(transaction) {
   )
 }
 
+function applyCustomerPresence(activeToday) {
+  presenceActiveToday.value = Boolean(activeToday)
+
+  if (!customer.value) {
+    return
+  }
+
+  customer.value = {
+    ...customer.value,
+    activeToday: presenceActiveToday.value,
+  }
+
+  cacheCustomer(customer.value)
+}
+
+async function refreshCustomerPresence() {
+  try {
+    const presence = await getCustomerPresence(
+      customerCode.value,
+    )
+
+    applyCustomerPresence(presence.activeToday)
+  } catch (error) {
+    console.error(error)
+  }
+}
+
 async function loadCustomer() {
+  presenceActiveToday.value = null
+
   const cachedCustomer = getCachedCustomer(
     customerCode.value,
   )
@@ -792,10 +1038,20 @@ async function loadCustomer() {
   isLoading.value = !cachedCustomer
   errorMessage.value = ''
 
+  refreshCustomerPresence()
+
   try {
-    customer.value = await getCustomer(
+    const loadedCustomer = await getCustomer(
       customerCode.value,
     )
+
+    customer.value = {
+      ...loadedCustomer,
+      activeToday:
+        presenceActiveToday.value ??
+        Boolean(loadedCustomer.activeToday),
+    }
+
     cacheCustomer(customer.value)
     recordRecentCustomer(customer.value)
   } catch (error) {
@@ -922,6 +1178,8 @@ async function saveTransaction() {
           change,
         )
 
+    presenceActiveToday.value = !isCheckout
+
     /*
      * Use the confirmed value returned by Apps Script.
      */
@@ -931,6 +1189,7 @@ async function saveTransaction() {
       lastVisit: result.timestamp.slice(0, 10),
       visitCount:
         result.visitCount ?? customer.value.visitCount,
+      activeToday: !isCheckout,
     }
 
     recordRecentCustomer(customer.value)
@@ -986,7 +1245,20 @@ function getActionName(action) {
   return 'うにょ履歴'
 }
 
-onMounted(loadCustomer)
+onMounted(() => {
+  loadCustomer()
+  document.addEventListener(
+    'fullscreenchange',
+    syncHistoryChartFullscreen,
+  )
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener(
+    'fullscreenchange',
+    syncHistoryChartFullscreen,
+  )
+})
 </script>
 
 <template>
@@ -1122,13 +1394,23 @@ onMounted(loadCustomer)
 
           <button
             type="button"
-            class="action-button action-button--checkout"
-            @click="openTransaction('checkout')"
+            class="action-button"
+            :class="
+              isCustomerActiveToday
+                ? 'action-button--checkout'
+                : 'action-button--entry'
+            "
+            :disabled="isSavingTransaction"
+            @click="handleAttendanceAction"
           >
-            <span class="action-icon">退</span>
+            <span class="action-icon">
+              {{ isCustomerActiveToday ? '退' : '入' }}
+            </span>
 
             <span class="action-copy">
-              <strong>退店</strong>
+              <strong>
+                {{ isCustomerActiveToday ? '退店' : '入店' }}
+              </strong>
             </span>
           </button>
 
@@ -1392,7 +1674,14 @@ onMounted(loadCustomer)
   </p>
 
   <template v-else>
-    <section class="history-chart-card">
+    <section
+      ref="historyChartCard"
+      class="history-chart-card"
+      :class="{
+        'history-chart-card--expanded':
+          isHistoryChartExpanded,
+      }"
+    >
       <div class="history-chart-header">
         <div>
           <span>残高推移</span>
@@ -1405,6 +1694,19 @@ onMounted(loadCustomer)
             }}
           </strong>
         </div>
+
+        <button
+          type="button"
+          class="chart-fullscreen-button"
+          :aria-label="
+            isHistoryChartExpanded
+              ? 'グラフを閉じる'
+              : 'グラフを全画面で表示'
+          "
+          @click="toggleHistoryChartFullscreen"
+        >
+          {{ isHistoryChartExpanded ? '×' : '⛶' }}
+        </button>
       </div>
 
     <div ref="historyChartScroll" class="history-chart-scroll">
@@ -1563,6 +1865,24 @@ onMounted(loadCustomer)
 
         </section>
       </div>
+
+      <Transition name="entry-saving">
+        <div
+          v-if="isEntrySaving"
+          class="entry-saving-backdrop"
+          role="status"
+          aria-live="polite"
+        >
+          <div class="entry-saving-card">
+            <span
+              class="entry-saving-spinner"
+              aria-hidden="true"
+            />
+
+            <strong>いらっしゃいませ! :D</strong>
+          </div>
+        </div>
+      </Transition>
 
       <div
         v-if="isPublicShareOpen"
@@ -1980,6 +2300,12 @@ h1 {
   transition-duration: 90ms;
 }
 
+.action-button:disabled {
+  cursor: wait;
+  opacity: .65;
+  transform: none;
+}
+
 .action-icon {
   display: grid;
   place-items: center;
@@ -2006,6 +2332,11 @@ h1 {
 .action-button--checkout .action-icon {
   color: #7a4d00;
   background: #fff5d8;
+}
+
+.action-button--entry .action-icon {
+  color: #197044;
+  background: #e8f7ef;
 }
 
 .action-button--history .action-icon {
@@ -2185,6 +2516,81 @@ h1 {
 .public-share-danger:disabled {
   cursor: wait;
   opacity: 0.5;
+}
+
+.entry-saving-backdrop {
+  position: fixed;
+  z-index: 1200;
+  inset: 0;
+
+  display: grid;
+  place-items: center;
+  padding: 20px;
+
+  background: rgb(10 24 38 / 28%);
+  backdrop-filter: blur(3px);
+}
+
+.entry-saving-card {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+
+  width: min(280px, calc(100vw - 48px));
+  padding: 22px 24px;
+
+  color: var(--color-primary);
+  text-align: center;
+
+  background: rgb(255 255 255 / 94%);
+  border: 1px solid rgb(23 50 77 / 10%);
+  border-radius: 22px;
+
+  box-shadow: 0 18px 42px rgb(15 34 53 / 18%);
+}
+
+.entry-saving-card strong {
+  font-size: 16px;
+}
+
+.entry-saving-spinner {
+  width: 34px;
+  height: 34px;
+
+  border: 4px solid rgb(23 50 77 / 14%);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+
+  animation: entry-saving-spin 700ms linear infinite;
+}
+
+@keyframes entry-saving-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.entry-saving-enter-active,
+.entry-saving-leave-active {
+  transition: opacity 180ms ease;
+}
+
+.entry-saving-enter-active .entry-saving-card,
+.entry-saving-leave-active .entry-saving-card {
+  transition:
+    transform 220ms var(--ease-out),
+    opacity 180ms ease;
+}
+
+.entry-saving-enter-from,
+.entry-saving-leave-to {
+  opacity: 0;
+}
+
+.entry-saving-enter-from .entry-saving-card,
+.entry-saving-leave-to .entry-saving-card {
+  opacity: 0;
+  transform: translateY(8px) scale(0.96);
 }
 
 
@@ -2667,6 +3073,8 @@ h1 {
 }
 
 .history-chart-card {
+  position: relative;
+
   margin-bottom: 20px;
   padding: 16px;
 
@@ -2678,6 +3086,31 @@ h1 {
 
   border: 1px solid var(--color-border);
   border-radius: 20px;
+}
+
+.history-chart-card--expanded {
+  position: fixed;
+  z-index: 1300;
+  inset: 12px;
+
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+
+  margin: 0;
+  padding: clamp(16px, 3vw, 30px);
+
+  background: white;
+
+  box-shadow: 0 24px 70px rgb(15 34 53 / 28%);
+}
+
+.history-chart-card:fullscreen {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+
+  padding: clamp(16px, 3vw, 34px);
+
+  background: white;
 }
 
 .history-chart-header {
@@ -2707,6 +3140,37 @@ h1 {
   font-size: 24px;
 }
 
+.chart-fullscreen-button {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+
+  width: 38px;
+  height: 38px;
+
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  border: 1px solid rgb(23 50 77 / 8%);
+  border-radius: 50%;
+
+  font-size: 18px;
+  font-weight: 900;
+
+  box-shadow: 0 5px 14px rgb(15 34 53 / 8%);
+
+  transition:
+    transform 160ms var(--ease-out),
+    background-color 160ms ease;
+}
+
+.chart-fullscreen-button:hover {
+  transform: translateY(-1px);
+}
+
+.chart-fullscreen-button:active {
+  transform: scale(0.94);
+}
+
 .history-chart-header small {
   padding: 6px 10px;
 
@@ -2729,6 +3193,14 @@ h1 {
   touch-action: auto;
 }
 
+.history-chart-card--expanded .history-chart-scroll,
+.history-chart-card:fullscreen .history-chart-scroll {
+  display: grid;
+  align-items: center;
+
+  min-height: 0;
+}
+
 .history-chart {
   display: block;
 
@@ -2736,6 +3208,13 @@ h1 {
   min-width: 0;
   max-width: 100%;
   height: auto;
+}
+
+.history-chart-card--expanded .history-chart,
+.history-chart-card:fullscreen .history-chart {
+  width: 100%;
+  height: 100%;
+  max-height: calc(100dvh - 118px);
 }
 
 .chart-axis {

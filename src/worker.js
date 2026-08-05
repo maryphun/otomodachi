@@ -591,6 +591,30 @@ async function publicCustomerPage_(requestUrl, env) {
       display: block;
     }
 
+    .history-panel.is-expanded {
+      position: fixed;
+      z-index: 1000;
+      inset: 12px;
+
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+
+      padding: clamp(16px, 3vw, 30px);
+
+      background: white;
+
+      box-shadow: 0 24px 70px rgb(15 34 53 / 28%);
+    }
+
+    .history-panel:fullscreen {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+
+      padding: clamp(16px, 3vw, 34px);
+
+      background: white;
+    }
+
     .history-status {
       margin: 0;
       color: #667483;
@@ -630,10 +654,60 @@ async function publicCustomerPage_(requestUrl, env) {
       font-variant-numeric: tabular-nums;
     }
 
+    .chart-fullscreen-button {
+      appearance: none;
+      display: grid;
+      flex: 0 0 auto;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      padding: 0;
+      color: #173754;
+      background: #e9f2fa;
+      border: 1px solid rgb(23 50 77 / 8%);
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 18px;
+      font-weight: 900;
+      line-height: 1;
+      box-shadow: 0 5px 14px rgb(15 34 53 / 8%);
+      transition:
+        transform 160ms cubic-bezier(.2, .8, .2, 1),
+        background-color 160ms ease;
+    }
+
+    .chart-fullscreen-button:hover {
+      transform: translateY(-1px);
+    }
+
+    .chart-fullscreen-button:active {
+      transform: scale(0.94);
+    }
+
+    .history-chart-scroll {
+      width: 100%;
+      max-width: 100%;
+      overflow: hidden;
+    }
+
+    .history-panel.is-expanded .history-chart-scroll,
+    .history-panel:fullscreen .history-chart-scroll {
+      display: grid;
+      align-items: center;
+      min-height: 0;
+    }
+
     .history-chart {
       display: block;
       width: 100%;
       height: auto;
+    }
+
+    .history-panel.is-expanded .history-chart,
+    .history-panel:fullscreen .history-chart {
+      width: 100%;
+      height: 100%;
+      max-height: calc(100dvh - 118px);
     }
 
     .chart-axis {
@@ -657,12 +731,6 @@ async function publicCustomerPage_(requestUrl, env) {
 
     .chart-line--dense {
       stroke-width: 3;
-    }
-
-    .chart-point {
-      fill: white;
-      stroke: #173754;
-      stroke-width: 4;
     }
 
     .chart-value-label {
@@ -735,6 +803,10 @@ async function publicCustomerPage_(requestUrl, env) {
 
     let historyLoaded = false
 
+    document.addEventListener('fullscreenchange', () => {
+      updateHistoryFullscreenButton()
+    })
+
     historyButton.addEventListener('click', async () => {
       historyButton.setAttribute('aria-expanded', 'true')
 
@@ -786,8 +858,20 @@ async function publicCustomerPage_(requestUrl, env) {
           Number.isFinite(Number(transaction.balanceAfter)),
         )
         .reverse()
+      const dailyFinalTransactions = new Map()
 
-      if (transactions.length === 0) {
+      transactions.forEach((transaction, index) => {
+        const dateKey =
+          getChartDateKey(transaction.timestamp) ||
+          'transaction-' + index
+
+        dailyFinalTransactions.set(dateKey, transaction)
+      })
+      const dailyTransactions = Array.from(
+        dailyFinalTransactions.values(),
+      )
+
+      if (dailyTransactions.length === 0) {
         historyPanel.innerHTML =
           '<p class="history-status">履歴はありません</p>'
         historyPanel.classList.add('is-visible')
@@ -797,9 +881,9 @@ async function publicCustomerPage_(requestUrl, env) {
       historyPanel.innerHTML =
         '<div class="history-chart-header"><div><span>残高推移</span><strong>' +
         formatNumber(currentBalance) +
-        '</strong></div></div>'
+        '</strong></div><button type="button" class="chart-fullscreen-button" data-history-fullscreen aria-label="グラフを全画面で表示">⛶</button></div>'
 
-      const points = buildChartPoints(transactions)
+      const points = buildChartPoints(dailyTransactions)
       const svg = svgElement('svg', {
         class: 'history-chart',
         viewBox: '0 0 ' + chartWidth + ' ' + chartHeight,
@@ -851,26 +935,6 @@ async function publicCustomerPage_(requestUrl, env) {
         )
       }
 
-      if (points.length <= chartLineOnlyThreshold) {
-        for (const point of points) {
-          const group = svgElement('g', {})
-          const title = svgElement('title', {})
-          title.textContent =
-            point.timestamp + '・' + formatNumber(point.balance) + 'うにょ'
-
-          group.append(
-            svgElement('circle', {
-              cx: point.x,
-              cy: point.y,
-              r: 6,
-              class: 'chart-point',
-            }),
-            title,
-          )
-          svg.append(group)
-        }
-      }
-
       for (const label of getValueLabels(points)) {
         const text = svgElement('text', {
           x: label.x,
@@ -893,8 +957,71 @@ async function publicCustomerPage_(requestUrl, env) {
         svg.append(text)
       }
 
-      historyPanel.append(svg)
+      const chartScroll = document.createElement('div')
+      chartScroll.className = 'history-chart-scroll'
+      chartScroll.append(svg)
+      historyPanel.append(chartScroll)
+
+      const fullscreenButton = historyPanel.querySelector(
+        '[data-history-fullscreen]',
+      )
+
+      if (fullscreenButton) {
+        fullscreenButton.addEventListener(
+          'click',
+          toggleHistoryPanelFullscreen,
+        )
+      }
+
       historyPanel.classList.add('is-visible')
+      updateHistoryFullscreenButton()
+    }
+
+    async function toggleHistoryPanelFullscreen() {
+      if (document.fullscreenElement === historyPanel) {
+        await document.exitFullscreen()
+        return
+      }
+
+      if (historyPanel.classList.contains('is-expanded')) {
+        historyPanel.classList.remove('is-expanded')
+        updateHistoryFullscreenButton()
+        return
+      }
+
+      if (historyPanel.requestFullscreen) {
+        try {
+          await historyPanel.requestFullscreen()
+          return
+        } catch (error) {
+          console.warn(error)
+        }
+      }
+
+      historyPanel.classList.add('is-expanded')
+      updateHistoryFullscreenButton()
+    }
+
+    function updateHistoryFullscreenButton() {
+      const button = historyPanel.querySelector(
+        '[data-history-fullscreen]',
+      )
+
+      if (!button) {
+        return
+      }
+
+      const isExpanded =
+        document.fullscreenElement === historyPanel ||
+        historyPanel.classList.contains('is-expanded')
+
+      button.textContent = isExpanded ? '×' : '⛶'
+      button.setAttribute(
+        'aria-label',
+        isExpanded
+          ? 'グラフを閉じる'
+          : 'グラフを全画面で表示',
+      )
     }
 
     function buildChartPoints(transactions) {
@@ -930,6 +1057,7 @@ async function publicCustomerPage_(requestUrl, env) {
           x,
           y,
           balance,
+          dateKey: getChartDateKey(transaction.timestamp),
           timestamp: String(transaction.timestamp || ''),
         }
       })
@@ -970,26 +1098,108 @@ async function publicCustomerPage_(requestUrl, env) {
     }
 
     function getValueLabels(points) {
-      const labels = []
-      let lastLabelX = Number.NEGATIVE_INFINITY
-      const minimumGap = getChartValueLabelGap(points.length)
+      const peakCandidates = []
+      const peakLabelGap = getChartPeakLabelGap(
+        points.length,
+      )
 
-      for (const point of points) {
-        if (point.x - lastLabelX < minimumGap) {
+      for (let index = 0; index < points.length; index++) {
+        const point = points[index]
+
+        if (!isChartPeak(points, index)) {
           continue
         }
 
-        labels.push({
+        peakCandidates.push({
           ...point,
           anchor: getChartTextAnchor(point.x),
           labelY: getChartValueLabelY(point),
           text: formatNumber(point.balance),
         })
-
-        lastLabelX = point.x
       }
 
-      return labels
+      if (peakCandidates.length === 0) {
+        const highestPoint = getHighestChartPoint(points)
+
+        return highestPoint
+          ? [
+              {
+                ...highestPoint,
+                anchor: getChartTextAnchor(highestPoint.x),
+                labelY: getChartValueLabelY(highestPoint),
+                text: formatNumber(highestPoint.balance),
+              },
+            ]
+          : []
+      }
+
+      return getSeparatedPeakLabels(
+        peakCandidates,
+        peakLabelGap,
+      )
+    }
+
+    function isChartPeak(points, index) {
+      if (points.length === 1) {
+        return true
+      }
+
+      const previous = points[index - 1]
+      const current = points[index]
+      const next = points[index + 1]
+
+      if (!previous) {
+        return current.balance > next.balance
+      }
+
+      if (!next) {
+        return current.balance > previous.balance
+      }
+
+      return (
+        current.balance >= previous.balance &&
+        current.balance >= next.balance &&
+        (current.balance > previous.balance ||
+          current.balance > next.balance)
+      )
+    }
+
+    function getHighestChartPoint(points) {
+      return points.reduce((highest, point) => {
+        if (!highest || point.balance > highest.balance) {
+          return point
+        }
+
+        return highest
+      }, null)
+    }
+
+    function getSeparatedPeakLabels(candidates, minimumGap) {
+      const selected = []
+      const byPeakHeight = [...candidates].sort(
+        (a, b) => b.balance - a.balance,
+      )
+
+      for (const candidate of byPeakHeight) {
+        const hasNearbyStrongerLabel = selected.some(
+          (label) =>
+            Math.abs(label.x - candidate.x) < minimumGap,
+        )
+
+        if (hasNearbyStrongerLabel) {
+          continue
+        }
+
+        selected.push(candidate)
+      }
+
+      return selected
+        .sort((a, b) => a.x - b.x)
+        .map((label) => ({
+          ...label,
+          anchor: getChartTextAnchor(label.x),
+          labelY: getChartValueLabelY(label),
+        }))
     }
 
     function getChartTextAnchor(x) {
@@ -1016,16 +1226,16 @@ async function publicCustomerPage_(requestUrl, env) {
       return 54
     }
 
-    function getChartValueLabelGap(pointCount) {
+    function getChartPeakLabelGap(pointCount) {
       if (pointCount > 48) {
-        return 170
+        return 96
       }
 
       if (pointCount > chartLineOnlyThreshold) {
-        return 136
+        return 82
       }
 
-      return 92
+      return 66
     }
 
     function getChartValueLabelY(point) {
@@ -1038,8 +1248,17 @@ async function publicCustomerPage_(requestUrl, env) {
       return labelAboveY
     }
 
+    function getChartDateKey(timestamp) {
+      return (
+        String(timestamp || '')
+          .trim()
+          .split(/[ T]/)[0]
+          ?.replaceAll('-', '/') || ''
+      )
+    }
+
     function formatChartDate(timestamp) {
-      const datePart = String(timestamp || '').split(' ')[0] || ''
+      const datePart = getChartDateKey(timestamp)
       const dateParts = datePart.replaceAll('-', '/').split('/')
 
       if (dateParts.length < 3) {
@@ -1127,6 +1346,31 @@ async function handleApi_(requestUrl, env, options = {}) {
       return proxyProductionQrApi_(requestUrl, env)
     }
 
+    if (action === 'getCustomerPresence') {
+      return jsonResponse_(
+        await getCustomerPresence_(
+          env,
+          requestUrl.searchParams.get('customerCode'),
+        ),
+      )
+    }
+
+    if (action === 'getTodayActiveCustomers') {
+      return jsonResponse_(await getTodayActiveCustomersFromD1_(env))
+    }
+
+    if (action === 'getCustomer') {
+      return jsonResponse_(
+        await getCustomerWithD1Presence_(requestUrl, env),
+      )
+    }
+
+    if (isAttendanceWriteAction_(action)) {
+      return jsonResponse_(
+        await proxyAppsScriptWithAttendanceUpdate_(requestUrl, env),
+      )
+    }
+
     if (action === 'getCustomerPublicProfile') {
       return jsonResponse_(
         await getCustomerPublicProfile_(
@@ -1148,18 +1392,34 @@ async function handleApi_(requestUrl, env, options = {}) {
   } catch (error) {
     console.error(error)
 
+    const isQrAction = [
+      'getCustomerPublicProfile',
+      'updateCustomerProfilePublic',
+    ].includes(action)
+
     return jsonResponse_(
       {
         success: false,
         error:
           error.message ||
-          '個人QRコードの確認に失敗しました',
+          (isQrAction
+            ? '個人QRコードの確認に失敗しました'
+            : 'API処理に失敗しました'),
       },
       500,
     )
   }
 
   return proxyAppsScript_(requestUrl, env)
+}
+
+function isAttendanceWriteAction_(action) {
+  return [
+    'addTransaction',
+    'enterCustomer',
+    'checkoutCustomer',
+    'createCustomer',
+  ].includes(action)
 }
 
 function isQrProfileApiAction_(requestUrl) {
@@ -1237,6 +1497,348 @@ async function proxyProductionQrApi_(requestUrl, env) {
       'cache-control': 'no-store',
     },
   })
+}
+
+async function getCustomerPresence_(env, customerCode) {
+  const code = normalizePublicCustomerCode_(customerCode)
+
+  if (!code) {
+    return {
+      success: false,
+      error: 'おともだちNo.が空です',
+    }
+  }
+
+  const row = await getTodayPresenceRow_(env, code)
+
+  return {
+    success: true,
+    data: {
+      customerCode: code,
+      activeToday: Boolean(row && Number(row.in_shop) === 1),
+      updatedAt: row?.updated_at || '',
+    },
+  }
+}
+
+async function getCustomerWithD1Presence_(requestUrl, env) {
+  const parameters = getRequestParameters_(requestUrl)
+  const result = await fetchAppsScriptJson_(parameters, env)
+
+  if (!result.success || !result.data) {
+    return result
+  }
+
+  const code = normalizePublicCustomerCode_(
+    result.data.customerCode || parameters.customerCode,
+  )
+  const row = code
+    ? await getTodayPresenceRow_(env, code)
+    : null
+
+  return {
+    ...result,
+    data: {
+      ...result.data,
+      activeToday: Boolean(row && Number(row.in_shop) === 1),
+    },
+  }
+}
+
+async function getTodayActiveCustomersFromD1_(env) {
+  const db = getAttendanceDatabase_(env)
+  await ensureTodayPresenceSchema_(db)
+
+  const today = getTokyoDateKey_()
+  const { results } = await db
+    .prepare(
+      [
+        'SELECT',
+        'customer_code, customer_name, balance_before, current_balance,',
+        'chip_change, movement_count, last_movement_amount, updated_at',
+        'FROM today_customer_presence',
+        'WHERE business_date = ? AND in_shop = 1',
+        'ORDER BY updated_at ASC',
+      ].join(' '),
+    )
+    .bind(today)
+    .all()
+
+  return {
+    success: true,
+    data: (results || []).map((row) => ({
+      customerCode: String(row.customer_code || ''),
+      customerName: String(row.customer_name || ''),
+      date: today,
+      balanceBefore: Number(row.balance_before || 0),
+      currentBalance: Number(row.current_balance || 0),
+      chipChange: Number(row.chip_change || 0),
+      movementCount: Number(row.movement_count || 0),
+      lastMovementAmount: Number(row.last_movement_amount || 0),
+      updatedAt: String(row.updated_at || ''),
+    })),
+  }
+}
+
+async function proxyAppsScriptWithAttendanceUpdate_(requestUrl, env) {
+  const action = requestUrl.searchParams.get('action') || ''
+  const parameters = getRequestParameters_(requestUrl)
+  const result = await fetchAppsScriptJson_(parameters, env)
+
+  if (!result.success || !result.data) {
+    return result
+  }
+
+  if (action === 'checkoutCustomer') {
+    await markCustomerOutOfShop_(env, result.data, parameters)
+
+    return {
+      ...result,
+      data: {
+        ...result.data,
+        activeToday: false,
+      },
+    }
+  }
+
+  await markCustomerInShop_(env, result.data, parameters, action)
+
+  return {
+    ...result,
+    data: {
+      ...result.data,
+      activeToday: true,
+    },
+  }
+}
+
+async function markCustomerInShop_(env, data, parameters, action) {
+  const code = normalizePublicCustomerCode_(
+    data.customerCode || parameters.customerCode,
+  )
+
+  if (!code) {
+    return
+  }
+
+  const db = getAttendanceDatabase_(env)
+  await ensureTodayPresenceSchema_(db)
+
+  const today = getTokyoDateKey_()
+  const timestamp = new Date().toISOString()
+  const existing = await getTodayPresenceRow_(env, code)
+  const wasInShop = Boolean(existing && Number(existing.in_shop) === 1)
+  const chipChange = Number(data.chipChange || 0)
+  const currentBalance = getFiniteNumber_(
+    data.newBalance,
+    data.currentBalance,
+    existing?.current_balance,
+    0,
+  )
+  const balanceBefore = wasInShop
+    ? Number(existing.balance_before || currentBalance)
+    : currentBalance - chipChange
+  const movementIncrement =
+    action === 'addTransaction' && chipChange !== 0 ? 1 : 0
+  const chipChangeTotal = wasInShop
+    ? Number(existing.chip_change || 0) + chipChange
+    : chipChange
+  const movementCount = wasInShop
+    ? Number(existing.movement_count || 0) + movementIncrement
+    : movementIncrement
+  const enteredAt = wasInShop
+    ? String(existing.entered_at || timestamp)
+    : timestamp
+
+  await db
+    .prepare(
+      [
+        'INSERT INTO today_customer_presence (',
+        'business_date, customer_code, customer_name, in_shop,',
+        'balance_before, current_balance, chip_change, movement_count,',
+        'last_movement_amount, entered_at, updated_at, exited_at',
+        ') VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, NULL)',
+        'ON CONFLICT(business_date, customer_code) DO UPDATE SET',
+        'customer_name = excluded.customer_name,',
+        'in_shop = 1,',
+        'balance_before = excluded.balance_before,',
+        'current_balance = excluded.current_balance,',
+        'chip_change = excluded.chip_change,',
+        'movement_count = excluded.movement_count,',
+        'last_movement_amount = excluded.last_movement_amount,',
+        'entered_at = excluded.entered_at,',
+        'updated_at = excluded.updated_at,',
+        'exited_at = NULL',
+      ].join(' '),
+    )
+    .bind(
+      today,
+      code,
+      String(data.customerName || existing?.customer_name || ''),
+      Math.round(balanceBefore),
+      Math.round(currentBalance),
+      Math.round(chipChangeTotal),
+      Math.round(movementCount),
+      Math.round(chipChange),
+      enteredAt,
+      timestamp,
+    )
+    .run()
+}
+
+async function markCustomerOutOfShop_(env, data, parameters) {
+  const code = normalizePublicCustomerCode_(
+    data.customerCode || parameters.customerCode,
+  )
+
+  if (!code) {
+    return
+  }
+
+  const db = getAttendanceDatabase_(env)
+  await ensureTodayPresenceSchema_(db)
+
+  const today = getTokyoDateKey_()
+  const timestamp = new Date().toISOString()
+  const existing = await getTodayPresenceRow_(env, code)
+  const currentBalance = getFiniteNumber_(
+    data.newBalance,
+    data.currentBalance,
+    existing?.current_balance,
+    0,
+  )
+
+  await db
+    .prepare(
+      [
+        'INSERT INTO today_customer_presence (',
+        'business_date, customer_code, customer_name, in_shop,',
+        'balance_before, current_balance, chip_change, movement_count,',
+        'last_movement_amount, entered_at, updated_at, exited_at',
+        ') VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'ON CONFLICT(business_date, customer_code) DO UPDATE SET',
+        'customer_name = excluded.customer_name,',
+        'in_shop = 0,',
+        'current_balance = excluded.current_balance,',
+        'updated_at = excluded.updated_at,',
+        'exited_at = excluded.exited_at',
+      ].join(' '),
+    )
+    .bind(
+      today,
+      code,
+      String(data.customerName || existing?.customer_name || ''),
+      Math.round(Number(existing?.balance_before || currentBalance)),
+      Math.round(currentBalance),
+      Math.round(Number(existing?.chip_change || 0)),
+      Math.round(Number(existing?.movement_count || 0)),
+      Math.round(Number(existing?.last_movement_amount || 0)),
+      String(existing?.entered_at || timestamp),
+      timestamp,
+      timestamp,
+    )
+    .run()
+}
+
+async function getTodayPresenceRow_(env, customerCode) {
+  const code = normalizePublicCustomerCode_(customerCode)
+
+  if (!code) {
+    return null
+  }
+
+  const db = getAttendanceDatabase_(env)
+  await ensureTodayPresenceSchema_(db)
+
+  return db
+    .prepare(
+      [
+        'SELECT *',
+        'FROM today_customer_presence',
+        'WHERE business_date = ? AND customer_code = ?',
+      ].join(' '),
+    )
+    .bind(getTokyoDateKey_(), code)
+    .first()
+}
+
+function getAttendanceDatabase_(env) {
+  const db = env.ATTENDANCE_DB || env.QR_DB
+
+  if (!db) {
+    throw new Error('Attendance database is not configured')
+  }
+
+  return db
+}
+
+async function ensureTodayPresenceSchema_(db) {
+  await db
+    .prepare(
+      [
+        'CREATE TABLE IF NOT EXISTS today_customer_presence (',
+        'business_date TEXT NOT NULL,',
+        'customer_code TEXT NOT NULL,',
+        "customer_name TEXT NOT NULL DEFAULT '',",
+        'in_shop INTEGER NOT NULL DEFAULT 1,',
+        'balance_before INTEGER NOT NULL DEFAULT 0,',
+        'current_balance INTEGER NOT NULL DEFAULT 0,',
+        'chip_change INTEGER NOT NULL DEFAULT 0,',
+        'movement_count INTEGER NOT NULL DEFAULT 0,',
+        'last_movement_amount INTEGER NOT NULL DEFAULT 0,',
+        'entered_at TEXT NOT NULL,',
+        'updated_at TEXT NOT NULL,',
+        'exited_at TEXT,',
+        'PRIMARY KEY (business_date, customer_code)',
+        ')',
+      ].join(' '),
+    )
+    .run()
+
+  await db
+    .prepare(
+      [
+        'CREATE INDEX IF NOT EXISTS idx_today_customer_presence_active',
+        'ON today_customer_presence (business_date, in_shop, updated_at)',
+      ].join(' '),
+    )
+    .run()
+}
+
+function getRequestParameters_(requestUrl) {
+  const parameters = {}
+
+  for (const [key, value] of requestUrl.searchParams) {
+    parameters[key] = value
+  }
+
+  return parameters
+}
+
+function getTokyoDateKey_(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date)
+  const values = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  )
+
+  return `${values.year}-${values.month}-${values.day}`
+}
+
+function getFiniteNumber_(...values) {
+  for (const value of values) {
+    const number = Number(value)
+
+    if (Number.isFinite(number)) {
+      return number
+    }
+  }
+
+  return 0
 }
 
 async function getCustomerPublicProfile_(env, customerCode) {
