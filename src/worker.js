@@ -1,3 +1,9 @@
+import {
+  readModelEnabled, readResource, readModelStatus, currentEpoch,
+  invalidateReadModel, publishReadModel, beginReadModelWrite,
+  finishReadModelWrite, pruneReadModel, unavailable,
+} from './server/readModel.js'
+
 const SESSION_COOKIE_NAME = 'otomo_session'
 const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 const PRODUCTION_ORIGIN =
@@ -9,6 +15,24 @@ const TEXT_ENCODER = new TextEncoder()
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
+
+    if (url.pathname.startsWith('/internal/read-model/')) {
+      return handleReadModelSync_(request, env)
+    }
+
+    if (url.pathname.startsWith('/public/customer-status/')) {
+      try {
+        const token = url.pathname.slice('/public/customer-status/'.length)
+        const result = await getPublicCustomerCodeByToken_(env, token)
+        if (!result.success) return jsonResponse_(result, 404)
+        const sync = readModelEnabled(env)
+          ? (await readResource(env, `customer:${result.data}`)).sync
+          : { revision: 'legacy', businessDate: getTokyoDateKey_() }
+        return jsonResponse_({ success: true, sync })
+      } catch {
+        return jsonResponse_({ success: false, error: '最新の記録を確認できません。' }, 503)
+      }
+    }
 
     if (request.method === 'OPTIONS') {
       return new Response(null, {
@@ -760,7 +784,7 @@ async function publicCustomerPage_(requestUrl, env) {
       <h2 class="customer-name">${customerName}<span class="suffix">さん</span></h2>
       <div class="balance">
         <span>現在のうにょ</span>
-        <strong>${balance}</strong>
+        <strong data-current-balance>${balance}</strong>
         <small>うにょ</small>
       </div>
     </section>
@@ -790,10 +814,9 @@ async function publicCustomerPage_(requestUrl, env) {
   </main>
   <script>
     const publicToken = ${publicTokenJson}
-    const currentBalance = Number(${JSON.stringify(Number(customer.currentBalance || 0))})
     const historyButton = document.querySelector('[data-history-button]')
     const historyPanel = document.querySelector('[data-history-panel]')
-    const historyStatus = document.querySelector('[data-history-status]')
+    let historyStatus = document.querySelector('[data-history-status]')
 
     const chartWidth = 640
     const chartHeight = 230
@@ -801,7 +824,30 @@ async function publicCustomerPage_(requestUrl, env) {
     const chartPaddingY = 24
     const chartLineOnlyThreshold = 28
 
-    let historyLoaded = false
+    const initialRevision = ${JSON.stringify(result.sync?.revision || 'legacy')}
+    const initialBusinessDate = ${JSON.stringify(result.sync?.businessDate || getTokyoDateKey_())}
+    let checkingProfile = false
+    let profileUnverified = false
+    async function checkProfile() {
+      if (document.visibilityState !== 'visible' || checkingProfile) return
+      checkingProfile = true
+      try {
+        const response = await fetch('/public/customer-status/' + encodeURIComponent(publicToken), { cache: 'no-store' })
+        const result = await response.json()
+        if (!result.success) throw new Error('最新の記録を確認できません。')
+        if (profileUnverified || result.sync.revision !== initialRevision || result.sync.businessDate !== initialBusinessDate) {
+          window.location.reload()
+        }
+      } catch {
+        profileUnverified = true
+        document.querySelector('[data-current-balance]').textContent = '未確認'
+        historyPanel.replaceChildren()
+        historyButton.disabled = true
+        historyButton.textContent = '再読み込みして記録を確認してください'
+      } finally { checkingProfile = false }
+    }
+    window.setInterval(checkProfile, 60000)
+    document.addEventListener('visibilitychange', checkProfile)
 
     document.addEventListener('fullscreenchange', () => {
       updateHistoryFullscreenButton()
@@ -810,14 +856,12 @@ async function publicCustomerPage_(requestUrl, env) {
     historyButton.addEventListener('click', async () => {
       historyButton.setAttribute('aria-expanded', 'true')
 
-      if (historyLoaded) {
-        return
-      }
-
       historyPanel.classList.remove('is-visible')
       historyButton.disabled = true
       historyButton.classList.add('is-loading')
       historyButton.textContent = '読み込み中...'
+      historyPanel.innerHTML = '<p class="history-status" data-history-status></p>'
+      historyStatus = historyPanel.querySelector('[data-history-status]')
       historyStatus.classList.remove('is-error')
       historyStatus.textContent = ''
 
@@ -825,6 +869,7 @@ async function publicCustomerPage_(requestUrl, env) {
         const response = await fetch(
           '/public/customer-history/' + encodeURIComponent(publicToken),
           {
+            cache: 'no-store',
             headers: {
               accept: 'application/json',
             },
@@ -836,8 +881,12 @@ async function publicCustomerPage_(requestUrl, env) {
           throw new Error(result.error || '履歴を読み込めませんでした')
         }
 
-        renderHistory(Array.isArray(result.data) ? result.data : [])
-        historyLoaded = true
+        if (!Array.isArray(result.data)) throw new Error('履歴の取得結果を確認できません')
+        if (result.sync && result.sync.revision !== initialRevision) {
+          window.location.reload()
+          return
+        }
+        renderHistory(result.data, result.historyIncomplete === true)
         historyButton.disabled = false
         historyButton.classList.remove('is-loading')
         historyButton.textContent = 'うにょ履歴を表示中'
@@ -852,7 +901,8 @@ async function publicCustomerPage_(requestUrl, env) {
       }
     })
 
-    function renderHistory(history) {
+    function renderHistory(history, incomplete) {
+      const notice = incomplete ? '<p class="history-status" role="status">履歴の一部を確認中です</p>' : ''
       const transactions = history
         .filter((transaction) =>
           Number.isFinite(Number(transaction.balanceAfter)),
@@ -865,7 +915,9 @@ async function publicCustomerPage_(requestUrl, env) {
           getChartDateKey(transaction.timestamp) ||
           'transaction-' + index
 
-        dailyFinalTransactions.set(dateKey, transaction)
+        const earlier = dailyFinalTransactions.get(dateKey)
+        dailyFinalTransactions.set(dateKey, { ...transaction,
+          breakBefore: Boolean(transaction.breakBefore || (earlier && earlier.breakBefore)) })
       })
       const dailyTransactions = Array.from(
         dailyFinalTransactions.values(),
@@ -873,14 +925,14 @@ async function publicCustomerPage_(requestUrl, env) {
 
       if (dailyTransactions.length === 0) {
         historyPanel.innerHTML =
-          '<p class="history-status">履歴はありません</p>'
+          notice || '<p class="history-status">履歴はありません</p>'
         historyPanel.classList.add('is-visible')
         return
       }
 
       historyPanel.innerHTML =
-        '<div class="history-chart-header"><div><span>残高推移</span><strong>' +
-        formatNumber(currentBalance) +
+        notice + '<div class="history-chart-header"><div><span>' + (incomplete ? '記録上の残高推移' : '残高推移') + '</span><strong>' +
+        formatNumber(dailyTransactions[dailyTransactions.length - 1].balanceAfter) +
         '</strong></div><button type="button" class="chart-fullscreen-button" data-history-fullscreen aria-label="グラフを全画面で表示">⛶</button></div>'
 
       const points = buildChartPoints(dailyTransactions)
@@ -922,7 +974,17 @@ async function publicCustomerPage_(requestUrl, env) {
         }),
       )
 
-      if (points.length > 1) {
+      const segments = []
+      let segment = []
+      points.forEach((point, index) => {
+        if (dailyTransactions[index].breakBefore) {
+          if (segment.length > 1) segments.push(segment)
+          segment = []
+        }
+        segment.push(point)
+      })
+      if (segment.length > 1) segments.push(segment)
+      for (const points of segments) {
         svg.append(
           svgElement('polyline', {
             points: points.map((point) => point.x + ',' + point.y).join(' '),
@@ -1338,6 +1400,27 @@ async function handleApi_(requestUrl, env, options = {}) {
   const action = requestUrl.searchParams.get('action') || ''
 
   try {
+    if (action === 'getSyncStatus') {
+      const sync = readModelEnabled(env) ? await readModelStatus(env) : {
+        sourceUpdatedAt: 'legacy', businessDate: getTokyoDateKey_(), revision: 'legacy',
+      }
+      return jsonResponse_({ success: true, data: sync, sync })
+    }
+
+    if (readModelEnabled(env)) {
+      const key = readModelResourceKey_(action, requestUrl.searchParams.get('customerCode'))
+      if (key) {
+        const result = await readResource(env, key)
+        if (action === 'getCustomerPresence') {
+          result.data = { customerCode: result.data.customerCode,
+            activeToday: result.data.activeToday, updatedAt: result.sync.sourceUpdatedAt }
+        }
+        return jsonResponse_(result)
+      }
+      if (isAttendanceWriteAction_(action)) {
+        return jsonResponse_(await saveAndSynchronize_(requestUrl, env))
+      }
+    }
     if (
       !options.skipLocalQrProxy &&
       isLocalRequestHost_(requestUrl.hostname) &&
@@ -1400,17 +1483,120 @@ async function handleApi_(requestUrl, env, options = {}) {
     return jsonResponse_(
       {
         success: false,
+        code: error.code || '',
         error:
           error.message ||
           (isQrAction
             ? '個人QRコードの確認に失敗しました'
             : 'API処理に失敗しました'),
       },
-      500,
+      error.status || 500,
     )
   }
 
+  if (readModelEnabled(env)) return jsonResponse_({ success: false, error: 'Unknown action' }, 400)
   return proxyAppsScript_(requestUrl, env)
+}
+
+function readModelResourceKey_(action, code) {
+  const keys = { getAllCustomers: 'customers', getTodayHistory: 'todayHistory',
+    getTodayActiveCustomers: 'activeCustomers' }
+  if (keys[action]) return keys[action]
+  if (['getCustomer', 'getCustomerPresence', 'getHistory'].includes(action)) {
+    const normalized = normalizePublicCustomerCode_(code)
+    if (!normalized) throw unavailable('おともだちNo.が空です')
+    return `${action === 'getHistory' ? 'history' : 'customer'}:${normalized}`
+  }
+  return null
+}
+
+async function synchronizeReadModel_(env) {
+  const epoch = await currentEpoch(env)
+  const result = await fetchAppsScriptJson_({ action: 'exportReadModel' }, env)
+  if (!result.success) throw unavailable('スプレッドシートの同期を確認できません。')
+  return publishReadModel(env, result.data, epoch)
+}
+
+async function saveAndSynchronize_(requestUrl, env) {
+  const parameters = getRequestParameters_(requestUrl)
+  if (parameters.clientVersion !== 'd1-v1') {
+    return { success: false, code: 'CLIENT_UPDATE_REQUIRED', error: 'ページを再読み込みしてから操作してください。' }
+  }
+  const id = await beginReadModelWrite(env, parameters)
+  const result = await fetchAppsScriptJson_(parameters, env)
+  if (!result.success) {
+    // A transport failure may conceal a completed Sheets write. Keep the barrier.
+    if (['CHECKOUT_NOT_ACTIVE', 'BALANCE_CHANGED', 'CLIENT_UPDATE_REQUIRED'].includes(result.code)) {
+      await finishReadModelWrite(env, id)
+      try { await synchronizeReadModel_(env) } catch { /* Scheduled reconciliation will retry reads only. */ }
+    }
+    return result
+  }
+  try {
+    await invalidateReadModel(env)
+    await finishReadModelWrite(env, id)
+    const sync = await synchronizeReadModel_(env)
+    return { ...result, sync }
+  } catch {
+    // Return the original confirmed receipt, never turn a sync error into a new chip operation.
+    return { ...result, data: { ...result.data, attendanceSyncPending: true, readModelSyncPending: true } }
+  }
+}
+
+async function handleReadModelSync_(request, env) {
+  if (request.method !== 'POST') return jsonResponse_({ success: false }, 405)
+  const actual = request.headers.get('x-otomo-sync-secret') || ''
+  if (!env.READ_MODEL_SYNC_SECRET || !actual) return jsonResponse_({ success: false }, 401)
+  const hashes = []
+  for (const secret of [actual, env.READ_MODEL_SYNC_SECRET]) {
+    hashes.push(new Uint8Array(await crypto.subtle.digest('SHA-256', TEXT_ENCODER.encode(secret))))
+  }
+  let difference = 0
+  for (let index = 0; index < hashes[0].length; index++) difference |= hashes[0][index] ^ hashes[1][index]
+  if (difference !== 0) return jsonResponse_({ success: false }, 401)
+  try {
+    const path = new URL(request.url).pathname
+    if (path === '/internal/read-model/invalidate') {
+      return jsonResponse_({ success: true, data: { invalidationEpoch: await invalidateReadModel(env) } })
+    }
+    if (path === '/internal/read-model/epoch') {
+      return jsonResponse_({ success: true, data: { invalidationEpoch: await currentEpoch(env) } })
+    }
+    if (path !== '/internal/read-model/sync') return jsonResponse_({ success: false }, 404)
+    // Enforce a bound even when the sender omits Content-Length.
+    const reader = request.body?.getReader()
+    if (!reader) return jsonResponse_({ success: false }, 400)
+    const chunks = []
+    let length = 0
+    while (true) {
+      const part = await reader.read()
+      if (part.done) break
+      length += part.value.byteLength
+      if (length > 8 * 1024 * 1024) {
+        await reader.cancel()
+        return jsonResponse_({ success: false }, 413)
+      }
+      chunks.push(part.value)
+    }
+    const bytes = new Uint8Array(length)
+    let offset = 0
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length }
+    const snapshot = JSON.parse(new TextDecoder().decode(bytes))
+    const sync = await publishReadModel(env, snapshot, snapshot.invalidationEpoch)
+    // Cleanup is not part of publication; failure must not invalidate a saved snapshot.
+    try { await pruneReadModel(env) } catch { console.error('Read-model cleanup failed') }
+    return jsonResponse_({ success: true, data: sync })
+  } catch (error) {
+    // Fixed diagnostic codes only: never log source records, secrets or raw DB errors.
+    const reasons = new Set(['INVALID_SNAPSHOT_METADATA', 'INVALID_RESOURCE',
+      'SNAPSHOT_TOO_LARGE', 'INCOMPLETE_SNAPSHOT', 'STATE_MISSING',
+      'SNAPSHOT_CONFLICT', 'BUCKET_TOO_LARGE'])
+    const reason = reasons.has(error.syncReason) ? error.syncReason : 'SYNC_INTERNAL_ERROR'
+    console.error(JSON.stringify({ stage: 'read_model_publish', reason, status: error.status || 503 }))
+    return jsonResponse_({ success: false, code: error.code || 'READ_MODEL_UNAVAILABLE',
+      reason,
+      error: '共有データの同期を完了できませんでした。' }, error.status || 503)
+  }
 }
 
 function isAttendanceWriteAction_(action) {
@@ -1589,8 +1775,21 @@ async function proxyAppsScriptWithAttendanceUpdate_(requestUrl, env) {
     return result
   }
 
+  // Replaying any old chip operation must not change the current visit.
+  if (result.data.replayed) return result
+
   if (action === 'checkoutCustomer') {
-    await markCustomerOutOfShop_(env, result.data, parameters)
+    try {
+      await markCustomerOutOfShop_(env, result.data, parameters)
+      const presence = await getCustomerPresence_(env, result.data.customerCode)
+      if (!presence.success || presence.data.activeToday) throw new Error('Attendance readback failed')
+    } catch (error) {
+      console.error('Checkout saved; attendance update failed', error)
+      return {
+        ...result,
+        data: { ...result.data, activeToday: false, attendanceSyncPending: true },
+      }
+    }
 
     return {
       ...result,
@@ -1601,7 +1800,14 @@ async function proxyAppsScriptWithAttendanceUpdate_(requestUrl, env) {
     }
   }
 
-  await markCustomerInShop_(env, result.data, parameters, action)
+  try {
+    await markCustomerInShop_(env, result.data, parameters, action)
+    const presence = await getCustomerPresence_(env, result.data.customerCode)
+    if (!presence.success || !presence.data.activeToday) throw new Error('Attendance readback failed')
+  } catch (error) {
+    console.error('Saved; attendance update could not be verified', error)
+    return { ...result, data: { ...result.data, attendanceSyncPending: true } }
+  }
 
   return {
     ...result,
@@ -1891,7 +2097,9 @@ async function updateCustomerPublicProfile_(
     }
   }
 
-  const customerResult = await fetchAppsScriptJson_(
+  const customerResult = readModelEnabled(env)
+    ? await readResource(env, `customer:${code}`)
+    : await fetchAppsScriptJson_(
     {
       action: 'getCustomer',
       customerCode: code,
@@ -1990,6 +2198,8 @@ async function getPublicCustomerByToken_(env, publicToken) {
     return codeResult
   }
 
+  if (readModelEnabled(env)) return readResource(env, `customer:${codeResult.data}`)
+
   return fetchAppsScriptJson_(
     {
       action: 'getCustomer',
@@ -2007,6 +2217,17 @@ async function getPublicCustomerHistoryByToken_(env, publicToken) {
 
   if (!codeResult.success) {
     return codeResult
+  }
+
+  if (readModelEnabled(env)) {
+    const result = await readResource(env, `history:${codeResult.data}`)
+    // Public links receive chart observations, never staff diagnostics or sheet row IDs.
+    return { success: true, sync: result.sync,
+      historyIncomplete: Boolean(result.historyWarnings?.length),
+      data: result.data.map((item, index) => ({ transactionId: `history-${index}`,
+        timestamp: item.timestamp, balanceBefore: item.balanceBefore,
+        balanceAfter: item.balanceAfter, chipChange: item.chipChange,
+        breakBefore: item.breakBefore === true })) }
   }
 
   return fetchAppsScriptJson_(

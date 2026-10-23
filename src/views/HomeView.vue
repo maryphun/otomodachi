@@ -7,11 +7,11 @@ import {
   getTodayHistory,
 } from '../services/api'
 import homeBackground from '../assets/home-background.jpg'
-import activeCustomersIcon from '../assets/home-active-customers-icon.png'
-import codeSearchIcon from '../assets/home-code-search-icon.png'
-import nameSearchIcon from '../assets/home-name-search-icon.png'
-import newCustomerIcon from '../assets/home-new-customer-icon.png'
-import recentCustomersIcon from '../assets/home-recent-customers-icon.png'
+import activeCustomersIcon from '../assets/home-active-customers-photo.png'
+import codeSearchIcon from '../assets/home-code-search-photo.png'
+import nameSearchIcon from '../assets/home-name-search-photo.jpg'
+import newCustomerIcon from '../assets/home-new-customer-photo.png'
+import recentCustomersIcon from '../assets/home-recent-customers-photo.png'
 import todayHistoryIcon from '../assets/home-today-history-icon.png'
 
 import {
@@ -57,6 +57,7 @@ const menuItems = [
     route: '/code-search',
     symbol: '#',
     iconImage: codeSearchIcon,
+    iconPosition: '50% 25%',
   },
   {
     title: '名前で検索',
@@ -64,6 +65,7 @@ const menuItems = [
     route: '/search/name',
     symbol: '名',
     iconImage: nameSearchIcon,
+    iconPosition: '50% 30%',
   },
   {
     title: '新規登録',
@@ -71,6 +73,7 @@ const menuItems = [
     route: '/new-customer',
     symbol: '+',
     iconImage: newCustomerIcon,
+    iconPosition: '50% 60%',
   },
   {
     title: '常連さん',
@@ -78,6 +81,7 @@ const menuItems = [
     route: '/recent-customers',
     symbol: '常',
     iconImage: recentCustomersIcon,
+    iconPosition: '50% 25%',
   },
   {
     title: '来店中リスト',
@@ -252,6 +256,7 @@ onMounted(warmAppData)
             <img
               v-if="item.iconImage"
               :src="item.iconImage"
+              :style="{ objectPosition: item.iconPosition }"
               alt=""
               class="menu-symbol-image"
             />

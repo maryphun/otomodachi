@@ -3,6 +3,7 @@
   "compatibility_date": "2026-07-03",
   "main": "./src/worker.js",
   "vars": {
+    "READ_MODEL_ENABLED": "true",
     "APPS_SCRIPT_URL": "https://script.google.com/macros/s/AKfycby8bn6bIhS9bDRxjHJUaCeUEeaqwWP4bfsyMkHnD1xXM1hnB83-4uUw7JJqarbAVtN_EA/exec"
   },
   "d1_databases": [
@@ -10,13 +11,15 @@
       "binding": "QR_DB",
       "database_name": "otomodachi-public-profiles",
       "database_id": "b763968e-2f79-4d33-96c3-6990eeea2cd8",
-      "migrations_dir": "migrations"
+      "migrations_dir": "migrations",
+      "remote": true
     },
     {
       "binding": "ATTENDANCE_DB",
       "database_name": "otomodachi-current-active-customer",
       "database_id": "e0d44928-aad0-4e73-8c8d-2b2f24b6ad19",
-      "migrations_dir": "migrations-attendance"
+      "migrations_dir": "migrations-attendance",
+      "remote": true
     }
   ],
   "assets": {

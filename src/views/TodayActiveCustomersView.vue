@@ -3,7 +3,6 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import {
-  getCachedTodayActiveCustomers,
   getTodayActiveCustomers,
 } from '../services/api'
 import todayActiveBackground from '../assets/today-active-background.jpg'
@@ -18,6 +17,7 @@ const isLoading = ref(true)
 const isRefreshing = ref(false)
 const errorMessage = ref('')
 const lastUpdated = ref('')
+let loadSequence = 0
 
 function goBack() {
   router.back()
@@ -64,24 +64,12 @@ function formatLastUpdated(value) {
   }).format(date)
 }
 
-function applyCachedCustomers(cached) {
-  if (!cached) {
-    return false
-  }
-
-  customers.value = Array.isArray(cached.customers)
-    ? cached.customers
-    : []
-  lastUpdated.value = cached.savedAt || ''
-  isLoading.value = false
-
-  return true
-}
-
 async function loadCustomers(
   showMainLoading = true,
-  forceRefresh = false,
 ) {
+  const sequence = ++loadSequence
+  customers.value = []
+  lastUpdated.value = ''
   if (showMainLoading) {
     isLoading.value = true
   } else {
@@ -91,42 +79,35 @@ async function loadCustomers(
   errorMessage.value = ''
 
   try {
-    const result = await getTodayActiveCustomers(
-      forceRefresh,
-    )
+    const result = await getTodayActiveCustomers()
+    if (sequence !== loadSequence) return
 
     customers.value = Array.isArray(result)
       ? result
       : []
-    lastUpdated.value =
-      getCachedTodayActiveCustomers()?.savedAt ||
-      new Date().toISOString()
+    lastUpdated.value = new Date().toISOString()
   } catch (error) {
+    if (sequence !== loadSequence) return
     console.error(error)
 
-    if (customers.value.length === 0) {
-      errorMessage.value =
-        error.message ||
-        '店内のおともだちを取得できませんでした'
-    }
+    customers.value = []
+    errorMessage.value =
+      error.message ||
+      '店内のおともだちを取得できませんでした'
   } finally {
-    isLoading.value = false
-    isRefreshing.value = false
+    if (sequence === loadSequence) {
+      isLoading.value = false
+      isRefreshing.value = false
+    }
   }
 }
 
 function refreshCustomers() {
-  loadCustomers(false, true)
+  loadCustomers(false)
 }
 
 onMounted(() => {
-  const hasCache = applyCachedCustomers(
-    getCachedTodayActiveCustomers(),
-  )
-
-  if (!hasCache) {
-    loadCustomers(true, true)
-  }
+  loadCustomers()
 })
 </script>
 
@@ -161,7 +142,7 @@ onMounted(() => {
       </button>
     </header>
 
-    <section class="summary-card">
+    <section v-if="!isLoading && !isRefreshing && !errorMessage" class="summary-card">
       <span class="summary-icon">店</span>
 
       <div>
@@ -189,7 +170,7 @@ onMounted(() => {
             'refresh-button--loading':
               isRefreshing,
           }"
-          :disabled="isRefreshing"
+          :disabled="isLoading || isRefreshing"
           @click="refreshCustomers"
         >
           <span class="refresh-icon">↻</span>
@@ -204,7 +185,7 @@ onMounted(() => {
       </div>
 
       <div
-        v-if="isLoading"
+        v-if="isLoading || isRefreshing"
         class="state-card"
       >
         <span class="loading-spinner" />
@@ -219,7 +200,7 @@ onMounted(() => {
 
         <button
           type="button"
-          @click="loadCustomers(true, true)"
+          @click="loadCustomers()"
         >
           再読み込み
         </button>

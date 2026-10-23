@@ -1,31 +1,5 @@
 const API_URL = import.meta.env.VITE_API_URL || '/api'
 
-const CACHE_VERSION = 'v2'
-const CUSTOMER_CACHE_KEY = `otomodachi-${CACHE_VERSION}-customers`
-const CUSTOMER_DETAIL_CACHE_PREFIX =
-  `otomodachi-${CACHE_VERSION}-customer-`
-const TODAY_HISTORY_CACHE_KEY =
-  `otomodachi-${CACHE_VERSION}-today-history`
-const TODAY_HISTORY_CACHE_TIME_KEY =
-  `otomodachi-${CACHE_VERSION}-today-history-time`
-const TODAY_ACTIVE_CUSTOMERS_CACHE_KEY =
-  `otomodachi-${CACHE_VERSION}-today-active-customers`
-const TODAY_ACTIVE_CUSTOMERS_CACHE_TIME_KEY =
-  `otomodachi-${CACHE_VERSION}-today-active-customers-time`
-const CUSTOMER_HISTORY_CACHE_PREFIX =
-  `otomodachi-${CACHE_VERSION}-history-`
-
-const MINUTE_MS = 60 * 1000
-const HOUR_MS = 60 * MINUTE_MS
-const DAY_MS = 24 * HOUR_MS
-
-const CUSTOMER_LIST_FRESH_MS = 6 * HOUR_MS
-const CUSTOMER_LIST_STALE_MS = 30 * DAY_MS
-const CUSTOMER_DETAIL_FRESH_MS = 30 * MINUTE_MS
-const CUSTOMER_DETAIL_STALE_MS = 30 * DAY_MS
-const CUSTOMER_HISTORY_FRESH_MS = 10 * MINUTE_MS
-const CUSTOMER_HISTORY_STALE_MS = 14 * DAY_MS
-const TODAY_HISTORY_FRESH_MS = 5 * MINUTE_MS
 const DEFAULT_API_TIMEOUT_MS = 15 * 1000
 const WRITE_API_TIMEOUT_MS = 45 * 1000
 const WRITE_ACTIONS = new Set([
@@ -36,8 +10,100 @@ const WRITE_ACTIONS = new Set([
   'updateCustomerProfilePublic',
 ])
 
-let allCustomersRequest = null
-const customerRequests = new Map()
+let writesInFlight = 0
+let editInProgress = false
+let initialSync = null
+let latestSync = null
+let serverChanged = false
+
+function readSync(sync) {
+  if (!sync || !['string', 'number'].includes(typeof sync.sourceUpdatedAt) ||
+      String(sync.sourceUpdatedAt).trim() === '' ||
+      typeof sync.businessDate !== 'string' || !sync.businessDate) {
+    return null
+  }
+  return {
+    sourceUpdatedAt: String(sync.sourceUpdatedAt),
+    businessDate: sync.businessDate,
+  }
+}
+
+function observeSync(sync) {
+  const next = readSync(sync)
+  if (!next) return
+  if (latestSync && next.sourceUpdatedAt < latestSync.sourceUpdatedAt &&
+      next.sourceUpdatedAt !== 'legacy' && latestSync.sourceUpdatedAt !== 'legacy') {
+    const error = new Error('新しい記録があります。再読み込みしてください。')
+    error.code = 'STALE_SERVER_RESPONSE'
+    throw error
+  }
+  latestSync = next
+  if (!initialSync) {
+    initialSync = next
+  } else if (next.sourceUpdatedAt !== initialSync.sourceUpdatedAt ||
+      next.businessDate !== initialSync.businessDate) {
+    // Keep the baseline until reload so another read cannot hide a change.
+    serverChanged = true
+  }
+}
+
+export async function checkServerChanges(onWaiting) {
+  await apiGet('getSyncStatus', {}, false, onWaiting)
+  return serverChanged
+}
+
+// Only acknowledge after the visible screen has fetched its replacement data.
+export function acknowledgeServerChanges() {
+  initialSync = latestSync
+  serverChanged = false
+}
+
+export function isEditInProgress() { return editInProgress }
+
+export function hasBusinessDateChanged() {
+  return Boolean(initialSync && latestSync && initialSync.businessDate !== latestSync.businessDate)
+}
+
+export function setEditInProgress(value) {
+  editInProgress = Boolean(value)
+}
+
+export function isWriteInFlight() { return writesInFlight > 0 }
+
+export function hasPendingWrites() {
+  return editInProgress || hasUnresolvedWrites()
+}
+
+export function hasUnresolvedWrites() {
+  if (writesInFlight > 0) return true
+  try {
+    for (let index = 0; index < sessionStorage.length; index++) {
+      if (/^otomodachi-(checkout|transaction)-pending-/.test(sessionStorage.key(index))) {
+        return true
+      }
+    }
+    return false
+  } catch {
+    // Do not interrupt unresolved writes when storage is inaccessible.
+    return true
+  }
+}
+
+export function clearLegacyFinancialCaches() {
+  for (const storageName of ['localStorage', 'sessionStorage']) {
+    try {
+      const storage = window[storageName]
+      for (let index = storage.length - 1; index >= 0; index--) {
+        const key = storage.key(index)
+        if (/^otomodachi-v\d+-(customers$|customer-|history-|today-history(?:-time)?$|today-active-customers(?:-time)?$)/.test(key)) {
+          storage.removeItem(key)
+        }
+      }
+    } catch (error) {
+      console.error('Could not remove legacy financial caches', error)
+    }
+  }
+}
 
 function getApiTimeoutMs(action) {
   return WRITE_ACTIONS.has(action)
@@ -106,10 +172,32 @@ function buildApiProblemMessage(
   return lines.join('\n')
 }
 
-function apiGet(action, parameters = {}) {
+async function apiGet(action, parameters = {}, includeEnvelope = false, onWaiting) {
+  // Retry reads only. Never replay a chip operation, even if its response was lost.
+  const delays = [1000, 2000, 3000, 3000, 3000]
+  const deadline = Date.now() + getApiTimeoutMs(action)
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await apiGetOnce(action, parameters, includeEnvelope, Math.max(1, deadline - Date.now()))
+    } catch (error) {
+      if (WRITE_ACTIONS.has(action) || attempt >= delays.length ||
+          Date.now() + delays[attempt] >= deadline ||
+          !['READ_MODEL_UNAVAILABLE', 'STALE_SERVER_RESPONSE'].includes(error.code)) {
+        if (!WRITE_ACTIONS.has(action) && action !== 'getSyncStatus' &&
+            ['READ_MODEL_UNAVAILABLE', 'STALE_SERVER_RESPONSE'].includes(error.code)) {
+          window.dispatchEvent?.(new CustomEvent('otomo-read-recovery-needed'))
+        }
+        throw error
+      }
+      onWaiting?.()
+      await new Promise(resolve => window.setTimeout(resolve, delays[attempt]))
+    }
+  }
+}
+
+function apiGetOnce(action, parameters = {}, includeEnvelope = false, timeoutMs = getApiTimeoutMs(action)) {
   const url = new URL(API_URL, window.location.origin)
   const controller = new AbortController()
-  const timeoutMs = getApiTimeoutMs(action)
   const timeoutId = window.setTimeout(() => {
     controller.abort()
   }, timeoutMs)
@@ -122,25 +210,41 @@ function apiGet(action, parameters = {}) {
     url.searchParams.set(key, String(value))
   }
 
-  return fetch(url.toString(), {
+  url.searchParams.set('clientVersion', 'd1-v1')
+
+  const isWrite = WRITE_ACTIONS.has(action)
+  if (isWrite) writesInFlight++
+
+  return Promise.resolve().then(() => fetch(url.toString(), {
     method: 'GET',
     signal: controller.signal,
     credentials: 'same-origin',
-  })
+    cache: 'no-store',
+  }))
     .then(async (response) => {
       const result = await response.json().catch(() => null)
 
       if (!response.ok || !result?.success) {
-        throw new Error(
-          buildApiProblemMessage(
+        const error = new Error(
+          result?.code === 'RECORD_VERIFICATION_REQUIRED' ? 'なんかおかしい...メリーに確認して' : result?.code ? result.error : buildApiProblemMessage(
             action,
             result?.error || 'Request failed',
             timeoutMs,
           ),
         )
+        error.code = result?.code
+        throw error
       }
 
-      return result.data
+      if (!isWrite) {
+        if (action === 'getSyncStatus' && !readSync(result.sync)) {
+          const error = new Error('Server sync metadata is unavailable')
+          error.code = 'SYNC_CONTRACT_INVALID'
+          throw error
+        }
+        observeSync(result.sync)
+      }
+      return includeEnvelope ? result : result.data
     })
     .catch((error) => {
       if (error.name === 'AbortError') {
@@ -156,7 +260,7 @@ function apiGet(action, parameters = {}) {
       throw error
     })
     .catch((error) => {
-      if (String(error.message || '').includes('Likely reasons:')) {
+      if (error.code || String(error.message || '').includes('Likely reasons:')) {
         throw error
       }
 
@@ -170,139 +274,12 @@ function apiGet(action, parameters = {}) {
     })
     .finally(() => {
       window.clearTimeout(timeoutId)
+      if (isWrite) writesInFlight--
     })
 }
 
-function getStoredValue(storage, key) {
-  try {
-    return storage.getItem(key)
-  } catch (error) {
-    console.error('キャッシュの読み込みに失敗しました', error)
-    return null
-  }
-}
-
-function setStoredValue(storage, key, value) {
-  try {
-    storage.setItem(key, value)
-  } catch (error) {
-    console.error('キャッシュの保存に失敗しました', error)
-  }
-}
-
-function removeStoredValue(storage, key) {
-  try {
-    storage.removeItem(key)
-  } catch (error) {
-    console.error('キャッシュの削除に失敗しました', error)
-  }
-}
-
-function parseCacheValue(
-  rawValue,
-  maxAgeMs = Number.POSITIVE_INFINITY,
-) {
-  if (!rawValue) {
-    return null
-  }
-
-  try {
-    const parsed = JSON.parse(rawValue)
-    const hasPayload =
-      parsed &&
-      typeof parsed === 'object' &&
-      Object.hasOwn(parsed, 'data') &&
-      Object.hasOwn(parsed, 'savedAt')
-
-    const data = hasPayload ? parsed.data : parsed
-    const savedAt = hasPayload
-      ? Number(parsed.savedAt)
-      : Date.now()
-
-    if (
-      !Number.isFinite(savedAt) ||
-      Date.now() - savedAt > maxAgeMs
-    ) {
-      return null
-    }
-
-    return {
-      data,
-      savedAt,
-    }
-  } catch (error) {
-    console.error('キャッシュの解析に失敗しました', error)
-    return null
-  }
-}
-
-function readCache(key, maxAgeMs = Number.POSITIVE_INFINITY) {
-  return (
-    parseCacheValue(
-      getStoredValue(sessionStorage, key),
-      maxAgeMs,
-    ) ||
-    parseCacheValue(
-      getStoredValue(localStorage, key),
-      maxAgeMs,
-    )
-  )
-}
-
-function writeCache(key, data, savedAt = Date.now()) {
-  const value = JSON.stringify({
-    data,
-    savedAt,
-  })
-
-  setStoredValue(sessionStorage, key, value)
-  setStoredValue(localStorage, key, value)
-}
-
-function removeCache(key) {
-  removeStoredValue(sessionStorage, key)
-  removeStoredValue(localStorage, key)
-}
-
-function getTokyoDateKey(value) {
-  const date = new Date(value)
-
-  if (Number.isNaN(date.getTime())) {
-    return ''
-  }
-
-  return new Intl.DateTimeFormat('ja-JP', {
-    timeZone: 'Asia/Tokyo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date)
-}
-
-function isTodayInTokyo(value) {
-  return (
-    getTokyoDateKey(value) ===
-    getTokyoDateKey(new Date())
-  )
-}
-
-function getCustomerDetailCacheKey(customerCode) {
-  return `${CUSTOMER_DETAIL_CACHE_PREFIX}${String(
-    customerCode,
-  )}`
-}
-
-function getCustomerHistoryCacheKey(
-  customerCode,
-  period = 'all',
-) {
-  return `${CUSTOMER_HISTORY_CACHE_PREFIX}${String(
-    customerCode,
-  )}-${String(period)}`
-}
-
 function normalizeCustomerCode(value) {
-  return String(value || '').trim()
+  return String(value || '').trim().padStart(4, '0')
 }
 
 function normalizeSearchText(value) {
@@ -319,845 +296,140 @@ function normalizeSearchText(value) {
     .replace(/\s+/g, '')
 }
 
-function customerCodesMatch(left, right) {
-  const normalizedLeft = normalizeCustomerCode(left)
-  const normalizedRight = normalizeCustomerCode(right)
-
-  return (
-    normalizedLeft === normalizedRight ||
-    normalizedLeft.replace(/^0+/, '') ===
-      normalizedRight.replace(/^0+/, '')
-  )
-}
-
 function normalizeCustomer(customer) {
-  if (!customer?.customerCode) {
-    return null
+  if (!customer?.customerCode || !Number.isSafeInteger(customer.currentBalance)) {
+    throw new Error('なんかおかしい...メリーに確認して')
   }
-
   return {
     ...customer,
-    customerCode: normalizeCustomerCode(
-      customer.customerCode,
-    ),
-    customerName: String(customer.customerName || ''),
-    customerReading: String(
-      customer.customerReading || '',
-    ),
-    currentBalance: Number(customer.currentBalance || 0),
-    lastVisit: String(customer.lastVisit || ''),
-    otoPoints: Number(customer.otoPoints || 0),
-    memo: String(customer.memo || ''),
-    visitCount: Number(customer.visitCount || 0),
-    firstVisit: String(customer.firstVisit || ''),
-    profilePublic: Boolean(customer.profilePublic),
-    activeToday: Boolean(customer.activeToday),
-    normalizedCustomerCode: normalizeCustomerCode(
-      customer.customerCode,
-    ).replace(/^0+/, ''),
-    normalizedCustomerName: normalizeSearchText(
-      [
-        customer.customerName,
-        customer.customerReading,
-      ].join(' '),
-    ),
+    customerCode: normalizeCustomerCode(customer.customerCode),
+    normalizedCustomerCode: normalizeCustomerCode(customer.customerCode).replace(/^0+/, ''),
+    normalizedCustomerName: normalizeSearchText([customer.customerName, customer.customerReading].join(' ')),
   }
 }
 
-function writeCustomersCache(customers, savedAt = Date.now()) {
-  writeCache(CUSTOMER_CACHE_KEY, customers, savedAt)
+function requireList(data) {
+  if (!Array.isArray(data)) throw new Error('取得結果を確認できません')
+  if (data.some(item => item?.readModelError)) throw new Error('記録の整合性を確認できません。スタッフに確認してください。')
+  return data
 }
 
-function writeCustomerDetailCache(customer) {
-  writeCache(
-    getCustomerDetailCacheKey(customer.customerCode),
-    customer,
-  )
+// Compatibility for callers being migrated separately; never retain financial data.
+export function getCachedCustomers() { return [] }
+export function getCachedCustomer() { return null }
+export function getCachedHistory() { return [] }
+export function getCachedTodayActiveCustomers() { return null }
+export function cacheCustomer() {}
+export function clearCustomerHistoryCache() {}
+export function clearTodayHistoryCache() {}
+export function clearTodayActiveCustomersCache() {}
 
-  if (
-    customer.normalizedCustomerCode &&
-    customer.normalizedCustomerCode !==
-      customer.customerCode
-  ) {
-    writeCache(
-      getCustomerDetailCacheKey(
-        customer.normalizedCustomerCode,
-      ),
-      customer,
-    )
-  }
+export async function getAllCustomers() {
+  return requireList(await apiGet('getAllCustomers')).map(normalizeCustomer)
 }
 
-function updateCustomerListCache(customer) {
-  const cached = readCache(
-    CUSTOMER_CACHE_KEY,
-    CUSTOMER_LIST_STALE_MS,
-  )
-
-  if (!cached || !Array.isArray(cached.data)) {
-    return
+export async function getCustomer(customerCode) {
+  const customer = await apiGet('getCustomer', { customerCode })
+  if (!customer || normalizeCustomerCode(customer.customerCode) !== normalizeCustomerCode(customerCode) ||
+      !Number.isSafeInteger(customer.currentBalance)) {
+    throw new Error('なんかおかしい...メリーに確認して')
   }
-
-  const customers = [...cached.data]
-  const index = customers.findIndex((item) =>
-    customerCodesMatch(
-      item.customerCode,
-      customer.customerCode,
-    ),
-  )
-
-  if (index >= 0) {
-    customers[index] = {
-      ...customers[index],
-      ...customer,
-    }
-  } else {
-    customers.push(customer)
-  }
-
-  customers.sort((a, b) =>
-    String(a.customerCode || '').localeCompare(
-      String(b.customerCode || ''),
-      'ja-JP',
-      { numeric: true },
-    ),
-  )
-
-  writeCustomersCache(customers)
-}
-
-export function getCachedCustomers() {
-  const cached = readCache(
-    CUSTOMER_CACHE_KEY,
-    CUSTOMER_LIST_STALE_MS,
-  )
-
-  if (!cached || !Array.isArray(cached.data)) {
-    return []
-  }
-
-  return cached.data
-}
-
-function applyTodayActiveCacheToCustomer(customer) {
-  if (!customer?.customerCode) {
-    return customer
-  }
-
-  const cached = readTodayActiveCustomersCacheRecord()
-
-  if (!cached) {
-    return customer
-  }
-
-  const activeCustomer = cached.data.find((item) =>
-    customerCodesMatch(
-      item.customerCode,
-      customer.customerCode,
-    ),
-  )
-  const nextCustomer = {
-    ...customer,
-    activeToday: Boolean(activeCustomer),
-  }
-
-  if (activeCustomer) {
-    const activeBalance = Number(
-      activeCustomer.currentBalance,
-    )
-
-    if (Number.isFinite(activeBalance)) {
-      nextCustomer.currentBalance = activeBalance
-    }
-
-    if (activeCustomer.date) {
-      nextCustomer.lastVisit = String(
-        activeCustomer.date,
-      ).replaceAll('-', '/')
-    }
-  }
-
-  return nextCustomer
-}
-
-export function getCachedCustomer(customerCode) {
-  const cached = readCache(
-    getCustomerDetailCacheKey(customerCode),
-    CUSTOMER_DETAIL_STALE_MS,
-  )
-
-  if (cached?.data) {
-    return applyTodayActiveCacheToCustomer(cached.data)
-  }
-
-  const customer = getCachedCustomers().find((item) =>
-    customerCodesMatch(
-      item.customerCode,
-      customerCode,
-    ),
-  )
-
-  return applyTodayActiveCacheToCustomer(customer)
-}
-
-export function getCachedHistory(
-  customerCode,
-  period = 'all',
-) {
-  const cached = readCache(
-    getCustomerHistoryCacheKey(customerCode, period),
-    CUSTOMER_HISTORY_STALE_MS,
-  )
-
-  if (!cached || !Array.isArray(cached.data)) {
-    return []
-  }
-
-  return cached.data
-}
-
-export function getCachedTodayActiveCustomers() {
-  const cached = readTodayActiveCustomersCacheRecord()
-
-  if (!cached) {
-    return null
-  }
-
-  return {
-    customers: cached.data,
-    savedAt: cached.savedAt,
-  }
-}
-
-export function cacheCustomer(customer) {
-  const normalizedCustomer = normalizeCustomer(customer)
-
-  if (!normalizedCustomer) {
-    return
-  }
-
-  writeCustomerDetailCache(normalizedCustomer)
-
-  updateCustomerListCache(normalizedCustomer)
-}
-
-export function clearCustomerHistoryCache(customerCode) {
-  removeCache(
-    getCustomerHistoryCacheKey(customerCode, 'all'),
-  )
-}
-
-export function clearTodayHistoryCache() {
-  removeCache(TODAY_HISTORY_CACHE_KEY)
-  removeCache(TODAY_HISTORY_CACHE_TIME_KEY)
-}
-
-export function clearTodayActiveCustomersCache() {
-  removeCache(TODAY_ACTIVE_CUSTOMERS_CACHE_KEY)
-  removeCache(TODAY_ACTIVE_CUSTOMERS_CACHE_TIME_KEY)
-}
-
-function readTodayHistoryCache(maxAgeMs) {
-  const cached =
-    getStoredValue(
-      sessionStorage,
-      TODAY_HISTORY_CACHE_KEY,
-    ) ||
-    getStoredValue(localStorage, TODAY_HISTORY_CACHE_KEY)
-
-  const cachedTime =
-    getStoredValue(
-      sessionStorage,
-      TODAY_HISTORY_CACHE_TIME_KEY,
-    ) ||
-    getStoredValue(
-      localStorage,
-      TODAY_HISTORY_CACHE_TIME_KEY,
-    )
-
-  if (!cached || !cachedTime) {
-    return null
-  }
-
-  const savedAt = new Date(cachedTime).getTime()
-
-  if (
-    Number.isNaN(savedAt) ||
-    Date.now() - savedAt > maxAgeMs
-  ) {
-    return null
-  }
-
-  try {
-    const data = JSON.parse(cached)
-
-    if (!Array.isArray(data)) {
-      return null
-    }
-
-    return data
-  } catch (error) {
-    console.error('本日履歴キャッシュの解析に失敗しました', error)
-    return null
-  }
-}
-
-function writeTodayHistoryCache(data) {
-  const now = new Date().toISOString()
-
-  setStoredValue(
-    sessionStorage,
-    TODAY_HISTORY_CACHE_KEY,
-    JSON.stringify(data),
-  )
-  setStoredValue(
-    localStorage,
-    TODAY_HISTORY_CACHE_KEY,
-    JSON.stringify(data),
-  )
-  setStoredValue(
-    sessionStorage,
-    TODAY_HISTORY_CACHE_TIME_KEY,
-    now,
-  )
-  setStoredValue(
-    localStorage,
-    TODAY_HISTORY_CACHE_TIME_KEY,
-    now,
-  )
-}
-
-function readTodayActiveCustomersCacheRecord(
-  maxAgeMs = Number.POSITIVE_INFINITY,
-) {
-  const cached =
-    getStoredValue(
-      sessionStorage,
-      TODAY_ACTIVE_CUSTOMERS_CACHE_KEY,
-    ) ||
-    getStoredValue(
-      localStorage,
-      TODAY_ACTIVE_CUSTOMERS_CACHE_KEY,
-    )
-
-  const cachedTime =
-    getStoredValue(
-      sessionStorage,
-      TODAY_ACTIVE_CUSTOMERS_CACHE_TIME_KEY,
-    ) ||
-    getStoredValue(
-      localStorage,
-      TODAY_ACTIVE_CUSTOMERS_CACHE_TIME_KEY,
-    )
-
-  if (!cached || !cachedTime) {
-    return null
-  }
-
-  const savedAt = new Date(cachedTime).getTime()
-
-  if (
-    Number.isNaN(savedAt) ||
-    Date.now() - savedAt > maxAgeMs ||
-    !isTodayInTokyo(cachedTime)
-  ) {
-    return null
-  }
-
-  try {
-    const data = JSON.parse(cached)
-
-    if (!Array.isArray(data)) {
-      return null
-    }
-
-    return {
-      data,
-      savedAt: cachedTime,
-    }
-  } catch (error) {
-    console.error('店内キャッシュの解析に失敗しました', error)
-    return null
-  }
-}
-
-function readTodayActiveCustomersCache(
-  maxAgeMs = Number.POSITIVE_INFINITY,
-) {
-  return (
-    readTodayActiveCustomersCacheRecord(maxAgeMs)
-      ?.data || null
-  )
-}
-
-function writeTodayActiveCustomersCache(data) {
-  const now = new Date().toISOString()
-
-  setStoredValue(
-    sessionStorage,
-    TODAY_ACTIVE_CUSTOMERS_CACHE_KEY,
-    JSON.stringify(data),
-  )
-  setStoredValue(
-    localStorage,
-    TODAY_ACTIVE_CUSTOMERS_CACHE_KEY,
-    JSON.stringify(data),
-  )
-  setStoredValue(
-    sessionStorage,
-    TODAY_ACTIVE_CUSTOMERS_CACHE_TIME_KEY,
-    now,
-  )
-  setStoredValue(
-    localStorage,
-    TODAY_ACTIVE_CUSTOMERS_CACHE_TIME_KEY,
-    now,
-  )
-}
-
-function updateTodayActiveCustomersCacheFromTransaction(
-  transaction,
-) {
-  const customerCode = normalizeCustomerCode(
-    transaction?.customerCode,
-  )
-  const chipChange = Number(transaction?.chipChange || 0)
-  const newBalance = Number(transaction?.newBalance)
-
-  if (
-    !customerCode ||
-    !Number.isFinite(chipChange) ||
-    chipChange === 0 ||
-    !Number.isFinite(newBalance)
-  ) {
-    return
-  }
-
-  const cached = readTodayActiveCustomersCacheRecord()
-  const customers = cached ? [...cached.data] : []
-  const index = customers.findIndex((customer) =>
-    customerCodesMatch(
-      customer.customerCode,
-      customerCode,
-    ),
-  )
-  const existing = index >= 0 ? customers[index] : null
-  const cachedCustomer = getCachedCustomer(customerCode)
-  const balanceBefore = Number(
-    existing?.balanceBefore,
-  )
-  const previousChipChange = Number(
-    existing?.chipChange || 0,
-  )
-  const previousMovementCount = Number(
-    existing?.movementCount || 0,
-  )
-  const nextCustomer = {
-    ...existing,
-    customerCode,
-    customerName: String(
-      transaction.customerName ||
-        existing?.customerName ||
-        cachedCustomer?.customerName ||
-        '',
-    ),
-    date: String(transaction.timestamp || '').slice(0, 10),
-    balanceBefore: Number.isFinite(balanceBefore)
-      ? balanceBefore
-      : newBalance - chipChange,
-    currentBalance: newBalance,
-    chipChange: previousChipChange + chipChange,
-    movementCount: previousMovementCount + 1,
-    lastMovementAmount: chipChange,
-  }
-
-  if (index >= 0) {
-    customers[index] = nextCustomer
-  } else {
-    customers.push(nextCustomer)
-  }
-
-  writeTodayActiveCustomersCache(customers)
-}
-
-function updateTodayActiveCustomersCacheFromEntry(entry) {
-  const customerCode = normalizeCustomerCode(
-    entry?.customerCode,
-  )
-  const newBalance = Number(entry?.newBalance)
-
-  if (!customerCode || !Number.isFinite(newBalance)) {
-    return
-  }
-
-  const cached = readTodayActiveCustomersCacheRecord()
-  const customers = cached ? [...cached.data] : []
-  const index = customers.findIndex((customer) =>
-    customerCodesMatch(
-      customer.customerCode,
-      customerCode,
-    ),
-  )
-  const existing = index >= 0 ? customers[index] : null
-  const cachedCustomer = getCachedCustomer(customerCode)
-  const nextCustomer = {
-    ...existing,
-    customerCode,
-    customerName: String(
-      entry.customerName ||
-        existing?.customerName ||
-        cachedCustomer?.customerName ||
-        '',
-    ),
-    date: String(entry.timestamp || '').slice(0, 10),
-    balanceBefore: newBalance,
-    currentBalance: newBalance,
-    chipChange: Number(existing?.chipChange || 0),
-    movementCount: Number(existing?.movementCount || 0),
-    lastMovementAmount: Number(
-      existing?.lastMovementAmount || 0,
-    ),
-  }
-
-  if (index >= 0) {
-    customers[index] = nextCustomer
-  } else {
-    customers.push(nextCustomer)
-  }
-
-  writeTodayActiveCustomersCache(customers)
-}
-
-function updateTodayActiveCustomersCacheFromNewCustomer(
-  customer,
-) {
-  const customerCode = normalizeCustomerCode(
-    customer?.customerCode,
-  )
-
-  if (!customerCode) {
-    return
-  }
-
-  const cached = readTodayActiveCustomersCacheRecord()
-  const customers = cached ? [...cached.data] : []
-  const index = customers.findIndex((cachedCustomer) =>
-    customerCodesMatch(
-      cachedCustomer.customerCode,
-      customerCode,
-    ),
-  )
-  const existing = index >= 0 ? customers[index] : null
-  const nextCustomer = {
-    ...existing,
-    customerCode,
-    customerName: String(
-      customer.customerName ||
-        existing?.customerName ||
-        '',
-    ),
-    date: new Date().toISOString().slice(0, 10),
-    balanceBefore: 0,
-    currentBalance: 0,
-    chipChange: 0,
-    movementCount: 0,
-    lastMovementAmount: 0,
-  }
-
-  if (index >= 0) {
-    customers[index] = nextCustomer
-  } else {
-    customers.push(nextCustomer)
-  }
-
-  writeTodayActiveCustomersCache(customers)
-}
-
-function removeTodayActiveCustomerFromCache(customerCode) {
-  const cached = readTodayActiveCustomersCacheRecord()
-
-  if (!cached) {
-    return
-  }
-
-  const customers = cached.data.filter(
-    (customer) =>
-      !customerCodesMatch(
-        customer.customerCode,
-        customerCode,
-      ),
-  )
-
-  writeTodayActiveCustomersCache(customers)
-}
-
-export async function getAllCustomers(
-  forceRefresh = false,
-) {
-  if (!forceRefresh) {
-    const cached = readCache(
-      CUSTOMER_CACHE_KEY,
-      CUSTOMER_LIST_FRESH_MS,
-    )
-
-    if (cached && Array.isArray(cached.data)) {
-      return cached.data
-    }
-  }
-
-  if (!allCustomersRequest) {
-    allCustomersRequest = apiGet(
-      'getAllCustomers',
-    )
-      .then((customers) => {
-        const normalizedCustomers = Array.isArray(
-          customers,
-        )
-          ? customers
-              .map((customer) =>
-                normalizeCustomer(customer),
-              )
-              .filter(Boolean)
-          : []
-
-        writeCustomersCache(normalizedCustomers)
-
-        for (const customer of normalizedCustomers) {
-          writeCustomerDetailCache(customer)
-        }
-
-        return normalizedCustomers
-      })
-      .finally(() => {
-        allCustomersRequest = null
-      })
-  }
-
-  return allCustomersRequest
-}
-
-export function getCustomer(customerCode) {
-  const normalizedCode =
-    normalizeCustomerCode(customerCode)
-  const cached = readCache(
-    getCustomerDetailCacheKey(customerCode),
-    CUSTOMER_DETAIL_FRESH_MS,
-  )
-
-  if (cached?.data) {
-    return Promise.resolve(
-      applyTodayActiveCacheToCustomer(cached.data),
-    )
-  }
-
-  if (!customerRequests.has(normalizedCode)) {
-    const request = apiGet('getCustomer', {
-      customerCode,
-    })
-      .then((customer) => {
-        const normalizedCustomer =
-          normalizeCustomer(customer)
-
-        if (normalizedCustomer) {
-          cacheCustomer(normalizedCustomer)
-          return normalizedCustomer
-        }
-
-        return customer
-      })
-      .finally(() => {
-        customerRequests.delete(normalizedCode)
-      })
-
-    customerRequests.set(normalizedCode, request)
-  }
-
-  return customerRequests.get(normalizedCode)
+  return normalizeCustomer(customer)
 }
 
 export function getCustomerPresence(customerCode) {
-  return apiGet('getCustomerPresence', {
-    customerCode,
-  }).then((result) => {
-    const activeToday = Boolean(result.activeToday)
-    const cachedCustomer = getCachedCustomer(
-      result.customerCode || customerCode,
-    )
-
-    if (cachedCustomer) {
-      cacheCustomer({
-        ...cachedCustomer,
-        activeToday,
-      })
-    }
-
-    return {
-      ...result,
-      activeToday,
-    }
-  })
+  return apiGet('getCustomerPresence', { customerCode })
 }
 
-export function getHistory(
-  customerCode,
-  period = 'all',
-  forceRefresh = false,
-) {
-  if (!forceRefresh) {
-    const cached = readCache(
-      getCustomerHistoryCacheKey(customerCode, period),
-      CUSTOMER_HISTORY_FRESH_MS,
-    )
+export async function getHistory(customerCode, period = 'all') {
+  return (await getHistoryReport(customerCode, period)).transactions
+}
 
-    if (cached && Array.isArray(cached.data)) {
-      return Promise.resolve(cached.data)
-    }
+export async function getHistoryReport(customerCode, period = 'all') {
+  const result = await apiGet('getHistory', { customerCode, period }, true)
+  if (result.historyWarnings !== undefined && !Array.isArray(result.historyWarnings)) {
+    throw new Error('履歴の取得結果を確認できません')
   }
-
-  return apiGet('getHistory', {
-    customerCode,
-    period,
-  }).then((history) => {
-    const normalizedHistory = Array.isArray(history)
-      ? history
-      : []
-
-    writeCache(
-      getCustomerHistoryCacheKey(customerCode, period),
-      normalizedHistory,
-    )
-
-    return normalizedHistory
-  })
+  return { transactions: requireList(result.data), warnings: result.historyWarnings || [] }
 }
 
-export function addTransaction(
-  customerCode,
-  chipChange,
-) {
-  return apiGet('addTransaction', {
-    customerCode,
-    chipChange,
-  }).then((result) => {
-    updateTodayActiveCustomersCacheFromTransaction(
-      result,
-    )
-
-    return result
-  })
+export function addTransaction(customerCode, chipChange, expectedBalance) {
+  return saveChipOperation('addTransaction', customerCode, chipChange, expectedBalance)
 }
 
 export function enterCustomer(customerCode) {
-  return apiGet('enterCustomer', {
-    customerCode,
-  }).then((result) => {
-    updateTodayActiveCustomersCacheFromEntry(result)
-
-    return result
-  })
+  return apiGet('enterCustomer', { customerCode })
 }
 
-export function checkoutCustomer(
-  customerCode,
-  endingAmount,
-) {
-  return apiGet('checkoutCustomer', {
-    customerCode,
-    endingAmount,
-  }).then((result) => {
-    removeTodayActiveCustomerFromCache(
-      result.customerCode || customerCode,
-    )
-
-    return result
-  })
+export function checkoutCustomer(customerCode, endingAmount, expectedBalance) {
+  return saveChipOperation('checkoutCustomer', customerCode, endingAmount, expectedBalance)
 }
 
-export function createCustomer(
-  customerName,
-  initialBalance = 0,
-) {
-  return apiGet('createCustomer', {
-    customerName,
-    initialBalance,
-  }).then((result) => {
-    updateTodayActiveCustomersCacheFromNewCustomer(
-      result,
-    )
+function saveChipOperation(action, customerCode, amount, expectedBalance) {
+  const isCheckout = action === 'checkoutCustomer'
+  const prefix = isCheckout ? 'checkout' : 'transaction'
+  const otherPrefix = isCheckout ? 'transaction' : 'checkout'
+  const key = `otomodachi-${prefix}-pending-${normalizeCustomerCode(customerCode)}`
+  let pending
+  try {
+    if (sessionStorage.getItem(`otomodachi-${otherPrefix}-pending-${normalizeCustomerCode(customerCode)}`)) {
+      throw new Error('Unresolved chip operation')
+    }
+    pending = JSON.parse(sessionStorage.getItem(key) || 'null')
+  } catch {
+    throw new Error('前回のうにょ操作を確認できません。別の操作をせず、スタッフに確認してください。')
+  }
+  if (pending && pending.amount !== amount) {
+    throw new Error('前回の操作結果が未確認です。同じ操作・金額で結果を確認してから操作してください。')
+  }
+  if (!pending) {
+    pending = { requestId: crypto.randomUUID(), amount, expectedBalance }
+    // Persist before sending so a timeout or reload retains the same receipt.
+    sessionStorage.setItem(key, JSON.stringify(pending))
+  }
+  // Include readback in the in-flight window so a poll cannot interrupt a confirmed save.
+  writesInFlight++
+  return apiGet(action, {
+    customerCode,
+    [isCheckout ? 'endingAmount' : 'chipChange']: amount,
+    requestId: pending.requestId,
+    ...(pending.expectedBalance === undefined ? {} : { expectedBalance: pending.expectedBalance }),
+  }).then(async (result) => {
+    if (result?.verified !== true || !Number.isSafeInteger(result.newBalance) ||
+        normalizeCustomerCode(result.customerCode) !== normalizeCustomerCode(customerCode)) {
+      throw new Error('保存結果を確認できません。操作を繰り返さず、スタッフに確認してください。')
+    }
+    // A replay acknowledges an older operation, not necessarily today's balance or visit.
+    const customer = await getCustomer(customerCode, true)
+    sessionStorage.removeItem(key)
+    clearCustomerHistoryCache(customerCode)
+    clearTodayHistoryCache()
+    clearTodayActiveCustomersCache()
+    return { ...result, customer }
+  }).catch((error) => {
+    if (['CHECKOUT_NOT_ACTIVE', 'BALANCE_CHANGED', 'CLIENT_UPDATE_REQUIRED'].includes(error.code)) {
+      sessionStorage.removeItem(key)
+    }
+    throw error
+  }).finally(() => { writesInFlight-- })
+}
 
-    return result
-  })
+export function createCustomer(customerName, initialBalance = 0) {
+  return apiGet('createCustomer', { customerName, initialBalance })
 }
 
 export function getCustomerPublicProfile(customerCode) {
-  return apiGet('getCustomerPublicProfile', {
-    customerCode,
-  })
+  return apiGet('getCustomerPublicProfile', { customerCode })
 }
 
-export function updateCustomerProfilePublic(
-  customerCode,
-  profilePublic,
-) {
-  return apiGet('updateCustomerProfilePublic', {
-    customerCode,
-    profilePublic,
-  }).then((result) => {
-    const cachedCustomer = getCachedCustomer(
-      result.customerCode || customerCode,
-    )
-
-    if (cachedCustomer) {
-      cacheCustomer({
-        ...cachedCustomer,
-        profilePublic: Boolean(
-          result.profilePublic,
-        ),
-      })
-    }
-
-    return result
-  })
+export function updateCustomerProfilePublic(customerCode, profilePublic) {
+  return apiGet('updateCustomerProfilePublic', { customerCode, profilePublic })
 }
 
-export function getTodayHistory(forceRefresh = false) {
-  if (!forceRefresh) {
-    const cached = readTodayHistoryCache(
-      TODAY_HISTORY_FRESH_MS,
-    )
-
-    if (cached) {
-      return Promise.resolve(cached)
-    }
-  }
-
-  return apiGet('getTodayHistory').then((history) => {
-    const normalizedHistory = Array.isArray(history)
-      ? history
-      : []
-
-    writeTodayHistoryCache(normalizedHistory)
-
-    return normalizedHistory
-  })
+export async function getTodayHistory() {
+  return requireList(await apiGet('getTodayHistory'))
 }
 
-export function getTodayActiveCustomers(forceRefresh = false) {
-  if (!forceRefresh) {
-    const cached = readTodayActiveCustomersCache()
-
-    if (cached) {
-      return Promise.resolve(cached)
-    }
-  }
-
-  return apiGet('getTodayActiveCustomers').then((customers) => {
-    const normalizedCustomers = Array.isArray(customers)
-      ? customers
-      : []
-
-    writeTodayActiveCustomersCache(normalizedCustomers)
-
-    return normalizedCustomers
-  })
+export async function getTodayActiveCustomers() {
+  return requireList(await apiGet('getTodayActiveCustomers'))
 }

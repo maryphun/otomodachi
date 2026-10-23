@@ -1,102 +1,45 @@
-const RECENT_CUSTOMERS_KEY =
-  'otomodachi-recent-customers'
-
+const RECENT_CUSTOMERS_KEY = 'otomodachi-recent-customers'
 const MAX_RECENT_CUSTOMERS = 20
+
+function saveRecentCustomers(ids) {
+  try {
+    localStorage.setItem(RECENT_CUSTOMERS_KEY, JSON.stringify(ids))
+  } catch (error) {
+    console.error('Could not save recent customer IDs', error)
+  }
+}
 
 export function getRecentCustomers() {
   try {
-    const saved = localStorage.getItem(
-      RECENT_CUSTOMERS_KEY,
-    )
-
-    if (!saved) {
-      return []
-    }
-
-    const customers = JSON.parse(saved)
-
-    if (!Array.isArray(customers)) {
-      return []
-    }
-
-    return customers.slice(
-      0,
-      MAX_RECENT_CUSTOMERS,
-    )
+    const saved = localStorage.getItem(RECENT_CUSTOMERS_KEY)
+    if (!saved) return []
+    const records = JSON.parse(saved)
+    const ids = Array.isArray(records)
+      ? [...new Set(records.map((record) => {
+          const code = typeof record === 'object' ? record?.customerCode : record
+          return typeof code === 'string' || typeof code === 'number' ? String(code).trim() : ''
+        }).filter(Boolean))].slice(0, MAX_RECENT_CUSTOMERS)
+      : []
+    // Migrate old snapshots without exposing any of their customer data.
+    saveRecentCustomers(ids)
+    return ids
   } catch (error) {
-    console.error(
-      '最近のおともだちキャッシュを読み込めませんでした',
-      error,
-    )
-
+    console.error('Could not read recent customer IDs', error)
+    saveRecentCustomers([])
     return []
   }
 }
 
 export function recordRecentCustomer(customer) {
-  if (!customer?.customerCode) {
-    return
-  }
-
-  const customers = getRecentCustomers()
-
-  const filteredCustomers = customers.filter(
-    (item) =>
-      String(item.customerCode) !==
-      String(customer.customerCode),
-  )
-
-  const recentCustomer = {
-    customerCode: String(
-      customer.customerCode,
-    ),
-
-    customerName: String(
-      customer.customerName || '名前未登録',
-    ),
-    customerReading: String(
-      customer.customerReading || '',
-    ),
-
-    currentBalance: Number(
-      customer.currentBalance || 0,
-    ),
-
-    lastVisit: customer.lastVisit || '',
-
-    accessedAt: new Date().toISOString(),
-  }
-
-  const updatedCustomers = [
-    recentCustomer,
-    ...filteredCustomers,
-  ].slice(0, MAX_RECENT_CUSTOMERS)
-
-  localStorage.setItem(
-    RECENT_CUSTOMERS_KEY,
-    JSON.stringify(updatedCustomers),
-  )
+  const code = String(customer?.customerCode || '').trim()
+  if (!code) return
+  saveRecentCustomers([code, ...getRecentCustomers().filter((id) => id !== code)].slice(0, MAX_RECENT_CUSTOMERS))
 }
 
-export function removeRecentCustomer(
-  customerCode,
-) {
-  const customers = getRecentCustomers()
-
-  const updatedCustomers = customers.filter(
-    (customer) =>
-      String(customer.customerCode) !==
-      String(customerCode),
-  )
-
-  localStorage.setItem(
-    RECENT_CUSTOMERS_KEY,
-    JSON.stringify(updatedCustomers),
-  )
+export function removeRecentCustomer(customerCode) {
+  saveRecentCustomers(getRecentCustomers().filter((id) => id !== String(customerCode)))
 }
 
 export function clearRecentCustomers() {
-  localStorage.removeItem(
-    RECENT_CUSTOMERS_KEY,
-  )
+  localStorage.removeItem(RECENT_CUSTOMERS_KEY)
 }

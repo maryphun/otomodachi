@@ -4,7 +4,6 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   getAllCustomers,
-  getCachedCustomers,
 } from '../services/api'
 import codeSearchBackground from '../assets/code-search-background.jpg'
 import {
@@ -18,6 +17,7 @@ const searchText = ref('')
 
 const isLoading = ref(true)
 const errorMessage = ref('')
+let loadSequence = 0
 
 const ROMAJI_TO_HIRAGANA = {
   a: 'あ',
@@ -241,32 +241,23 @@ function openCustomer(customerCode) {
   router.push(`/customer/${customerCode}`)
 }
 
-async function loadCustomers(forceRefresh = false) {
-  const cachedCustomers = forceRefresh
-    ? []
-    : getCachedCustomers()
-  const hasCachedCustomers = cachedCustomers.length > 0
-
-  if (hasCachedCustomers) {
-    customers.value = cachedCustomers
-  }
-
-  isLoading.value = !hasCachedCustomers
+async function loadCustomers() {
+  const sequence = ++loadSequence
+  customers.value = []
+  isLoading.value = true
   errorMessage.value = ''
 
   try {
-    customers.value =
-      await getAllCustomers(forceRefresh)
+    const result = await getAllCustomers()
+    if (sequence !== loadSequence) return
+    customers.value = result
   } catch (error) {
+    if (sequence !== loadSequence) return
     console.error(error)
-
-    if (!hasCachedCustomers) {
-      errorMessage.value =
-        error.message ||
-        'おともだち情報の取得に失敗しました'
-    }
+    customers.value = []
+    errorMessage.value = error.message || 'おともだち情報の取得に失敗しました'
   } finally {
-    isLoading.value = false
+    if (sequence === loadSequence) isLoading.value = false
   }
 }
 
@@ -365,7 +356,7 @@ onMounted(loadCustomers)
 
         <button
           type="button"
-          @click="loadCustomers(true)"
+          @click="loadCustomers()"
         >
           再読み込み
         </button>

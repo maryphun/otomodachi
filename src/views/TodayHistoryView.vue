@@ -16,19 +16,12 @@ import {
 
 const router = useRouter()
 
-const CACHE_KEY =
-  'otomodachi-v3-today-history'
-
-const CACHE_TIME_KEY =
-  'otomodachi-v3-today-history-time'
-
-const HISTORY_FRESH_MS = 5 * 60 * 1000
-
 const transactions = ref([])
 const isLoading = ref(true)
 const isRefreshing = ref(false)
 const errorMessage = ref('')
 const lastUpdated = ref('')
+let loadSequence = 0
 
 const totalDeposit = computed(() => {
   return transactions.value
@@ -137,171 +130,40 @@ function formatLastUpdated(value) {
   }).format(date)
 }
 
-function getTokyoDateKey(value) {
-  const date = new Date(value)
-
-  if (Number.isNaN(date.getTime())) {
-    return ''
-  }
-
-  return new Intl.DateTimeFormat('ja-JP', {
-    timeZone: 'Asia/Tokyo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date)
-}
-
-function isTodayInTokyo(value) {
-  return (
-    getTokyoDateKey(value) ===
-    getTokyoDateKey(new Date())
-  )
-}
-
-function getCachedValue(key) {
-  return (
-    sessionStorage.getItem(key) ||
-    localStorage.getItem(key)
-  )
-}
-
-function setCachedValue(key, value) {
-  sessionStorage.setItem(key, value)
-  localStorage.setItem(key, value)
-}
-
-function loadCachedHistory() {
-  try {
-    const cached = getCachedValue(CACHE_KEY)
-
-    const cachedTime = getCachedValue(
-      CACHE_TIME_KEY,
-    )
-
-    if (!cached) {
-      return false
-    }
-
-    if (
-      cachedTime &&
-      !isTodayInTokyo(cachedTime)
-    ) {
-      return false
-    }
-
-    const parsed = JSON.parse(cached)
-
-    if (!Array.isArray(parsed)) {
-      return false
-    }
-
-    transactions.value = parsed
-    lastUpdated.value = cachedTime || ''
-    isLoading.value = false
-
-    return true
-  } catch (error) {
-    console.error(
-      '履歴キャッシュの読み込みに失敗しました',
-      error,
-    )
-
-    return false
-  }
-}
-
-function saveHistoryCache(data) {
-  const now = new Date().toISOString()
-
-  setCachedValue(
-    CACHE_KEY,
-    JSON.stringify(data),
-  )
-
-  setCachedValue(
-    CACHE_TIME_KEY,
-    now,
-  )
-
-  lastUpdated.value = now
-}
-
-async function loadHistory(
-  showMainLoading = true,
-  forceRefresh = false,
-) {
+async function loadHistory(showMainLoading = true) {
+  const sequence = ++loadSequence
+  transactions.value = []
+  lastUpdated.value = ''
   if (showMainLoading) {
     isLoading.value = true
   } else {
     isRefreshing.value = true
   }
-
   errorMessage.value = ''
 
   try {
-    const result = await getTodayHistory(
-      forceRefresh,
-    )
-
-    transactions.value = Array.isArray(result)
-      ? result
-      : []
-
-    saveHistoryCache(transactions.value)
+    const result = await getTodayHistory()
+    if (sequence !== loadSequence) return
+    transactions.value = result
+    lastUpdated.value = new Date().toISOString()
   } catch (error) {
+    if (sequence !== loadSequence) return
     console.error(error)
-
-    /*
-     * キャッシュがある場合は、
-     * 古い表示を残したままにします。
-     */
-    if (transactions.value.length === 0) {
-      errorMessage.value =
-        error.message ||
-        '本日の履歴を取得できませんでした'
-    }
+    transactions.value = []
+    errorMessage.value = error.message || '本日の履歴を取得できませんでした'
   } finally {
-    isLoading.value = false
-    isRefreshing.value = false
+    if (sequence === loadSequence) {
+      isLoading.value = false
+      isRefreshing.value = false
+    }
   }
-}
-
-function isCachedHistoryFresh() {
-  if (!lastUpdated.value) {
-    return false
-  }
-
-  const date = new Date(lastUpdated.value)
-
-  if (Number.isNaN(date.getTime())) {
-    return false
-  }
-
-  return (
-    isTodayInTokyo(lastUpdated.value) &&
-    Date.now() - date.getTime() < HISTORY_FRESH_MS
-  )
 }
 
 function refreshHistory() {
-  loadHistory(false, true)
+  loadHistory(false)
 }
 
-onMounted(() => {
-  const hasCache = loadCachedHistory()
-
-  if (!hasCache) {
-    loadHistory(true, true)
-    return
-  }
-
-  isLoading.value = false
-
-  if (!isCachedHistoryFresh()) {
-    loadHistory(false, true)
-  }
-})
+onMounted(() => { loadHistory() })
 </script>
 
 <template>
@@ -333,7 +195,7 @@ onMounted(() => {
       </button>
     </header>
 
-    <section class="summary-grid">
+    <section v-if="!isLoading && !isRefreshing && !errorMessage" class="summary-grid">
       <article class="summary-card">
         <span class="summary-icon summary-icon--deposit">
           ＋
@@ -408,7 +270,7 @@ onMounted(() => {
             'refresh-button--loading':
               isRefreshing,
           }"
-          :disabled="isRefreshing"
+          :disabled="isLoading || isRefreshing"
           @click="refreshHistory"
         >
           <span class="refresh-icon">
@@ -426,7 +288,7 @@ onMounted(() => {
       </div>
 
       <div
-        v-if="isLoading"
+        v-if="isLoading || isRefreshing"
         class="state-card"
       >
         <span class="loading-spinner" />
@@ -444,7 +306,7 @@ onMounted(() => {
 
         <button
           type="button"
-          @click="loadHistory(true, true)"
+          @click="loadHistory()"
         >
           再読み込み
         </button>

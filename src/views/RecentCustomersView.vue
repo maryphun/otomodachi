@@ -2,6 +2,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { getAllCustomers } from '../services/api'
 
 import {
   clearRecentCustomers,
@@ -15,9 +16,29 @@ import {
 const router = useRouter()
 
 const recentCustomers = ref([])
+const isLoading = ref(true)
+const errorMessage = ref('')
+let loadSequence = 0
 
-function loadRecentCustomers() {
-  recentCustomers.value = getRecentCustomers()
+async function loadRecentCustomers() {
+  const sequence = ++loadSequence
+  recentCustomers.value = []
+  isLoading.value = true
+  errorMessage.value = ''
+  try {
+    const ids = getRecentCustomers()
+    const customers = await getAllCustomers()
+    if (sequence !== loadSequence) return
+    const byCode = new Map(customers.map((customer) => [String(customer.customerCode), customer]))
+    recentCustomers.value = ids.map((id) => byCode.get(id)).filter(Boolean)
+  } catch (error) {
+    if (sequence !== loadSequence) return
+    console.error(error)
+    recentCustomers.value = []
+    errorMessage.value = error.message || 'おともだち情報の取得に失敗しました'
+  } finally {
+    if (sequence === loadSequence) isLoading.value = false
+  }
 }
 
 function openCustomer(customerCode) {
@@ -36,26 +57,6 @@ function formatNumber(value) {
   return Number(value || 0).toLocaleString('ja-JP')
 }
 
-function formatAccessTime(value) {
-  if (!value) {
-    return ''
-  }
-
-  const date = new Date(value)
-
-  if (Number.isNaN(date.getTime())) {
-    return ''
-  }
-
-  return new Intl.DateTimeFormat('ja-JP', {
-    timeZone: 'Asia/Tokyo',
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date)
-}
-
 function clearHistory() {
   const confirmed = window.confirm(
     '最近アクセスしたおともだちの記録を削除しますか？',
@@ -66,6 +67,8 @@ function clearHistory() {
   }
 
   clearRecentCustomers()
+  loadSequence++
+  isLoading.value = false
   recentCustomers.value = []
 }
 
@@ -112,13 +115,24 @@ onMounted(loadRecentCustomers)
         </p>
       </div>
 
-      <span class="customer-count">
+      <span v-if="!isLoading && !errorMessage" class="customer-count">
         {{ recentCustomers.length }}名
       </span>
     </section>
 
+    <section v-if="isLoading" class="empty-card" role="status">
+      <p>おともだち情報を読み込み中...</p>
+    </section>
+
+    <section v-else-if="errorMessage" class="empty-card" role="alert">
+      <p>{{ errorMessage }}</p>
+      <button type="button" class="search-button" @click="loadRecentCustomers">
+        再読み込み
+      </button>
+    </section>
+
     <section
-      v-if="recentCustomers.length === 0"
+      v-else-if="recentCustomers.length === 0"
       class="empty-card"
     >
       <span class="empty-icon">時</span>
@@ -175,17 +189,6 @@ onMounted(loadRecentCustomers)
               {{ customer.customerCode }}
             </span>
 
-            <span
-              v-if="customer.accessedAt"
-              class="access-time"
-            >
-              最終アクセス：
-              {{
-                formatAccessTime(
-                  customer.accessedAt,
-                )
-              }}
-            </span>
           </span>
 
           <span class="customer-balance">

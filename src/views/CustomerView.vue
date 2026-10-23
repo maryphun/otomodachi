@@ -8,6 +8,7 @@ import {
   onBeforeUnmount,
   onMounted,
   ref,
+  watch,
 } from 'vue'
 
 import { useRoute, useRouter } from 'vue-router'
@@ -19,12 +20,11 @@ import {
   clearTodayHistoryCache,
   enterCustomer,
   getCachedCustomer,
-  getCachedHistory,
   getCustomer,
-  getCustomerPresence,
   getCustomerPublicProfile,
-  getHistory,
+  getHistoryReport,
   updateCustomerProfilePublic,
+  setEditInProgress,
 } from '../services/api'
 
 import {
@@ -43,13 +43,16 @@ const router = useRouter()
 
 const customer = ref(null)
 const history = ref([])
+const historyWarnings = ref([])
 const presenceActiveToday = ref(null)
 
 const selectedAction = ref('')
+watch(selectedAction, value => setEditInProgress(['deposit', 'withdrawal', 'checkout'].includes(value)), { flush: 'sync' })
 
 const isLoading = ref(true)
 const isHistoryLoading = ref(false)
 const isSavingTransaction = ref(false)
+const isBalanceUnverified = ref(true)
 const isEntrySaving = ref(false)
 const isHistoryChartExpanded = ref(false)
 const isPublicShareOpen = ref(false)
@@ -134,6 +137,11 @@ const expectedBalance = computed(() => {
   return currentBalance.value + transactionChange.value
 })
 
+const showTransactionBalances = computed(() => {
+  // During saving these are the confirmed starting balance and a preview, not a saved result.
+  return !isBalanceUnverified.value || (isSavingTransaction.value && !transactionError.value)
+})
+
 const isWithdrawalTooLarge = computed(() => {
   return (
     selectedAction.value === 'withdrawal' &&
@@ -143,6 +151,7 @@ const isWithdrawalTooLarge = computed(() => {
 })
 
 const transactionValidationMessage = computed(() => {
+  if (isBalanceUnverified.value) return 'なんかおかしい...メリーに確認して'
   if (isWithdrawalTooLarge.value) {
     return '現在のうにょを超えて引き出すことはできません'
   }
@@ -153,7 +162,7 @@ const transactionValidationMessage = computed(() => {
 const displayedTransactionError = computed(() => {
   return (
     transactionError.value ||
-    transactionValidationMessage.value
+    (isSavingTransaction.value ? '' : transactionValidationMessage.value)
   )
 })
 
@@ -161,6 +170,7 @@ const canSaveTransaction = computed(() => {
   if (selectedAction.value === 'checkout') {
     return (
       !isSavingTransaction.value &&
+      !isBalanceUnverified.value &&
       transactionAmount.value >= 0
     )
   }
@@ -254,7 +264,9 @@ const chartTransactions = computed(() => {
       getChartDateKey(transaction.timestamp) ||
       `transaction-${index}`
 
-    dailyFinalTransactions.set(dateKey, transaction)
+    const earlier = dailyFinalTransactions.get(dateKey)
+    dailyFinalTransactions.set(dateKey, { ...transaction,
+      breakBefore: Boolean(transaction.breakBefore || earlier?.breakBefore) })
   })
 
   return [...dailyFinalTransactions.values()]
@@ -334,14 +346,23 @@ const chartPoints = computed(() => {
       ),
       timestamp: transaction.timestamp,
       transactionId: transaction.transactionId,
+      breakBefore: transaction.breakBefore,
     }
   })
 })
 
-const chartPolylinePoints = computed(() => {
-  return chartPoints.value
-    .map((point) => `${point.x},${point.y}`)
-    .join(' ')
+const chartPolylineSegments = computed(() => {
+  const segments = []
+  let segment = []
+  for (const point of chartPoints.value) {
+    if (point.breakBefore) {
+      if (segment.length > 1) segments.push(segment.join(' '))
+      segment = []
+    }
+    segment.push(`${point.x},${point.y}`)
+  }
+  if (segment.length > 1) segments.push(segment.join(' '))
+  return segments
 })
 
 const isDenseChart = computed(() => {
@@ -648,7 +669,7 @@ function removeAmountDigit() {
 }
 
 function openTransaction(action) {
-  if (isSavingTransaction.value) {
+  if (isSavingTransaction.value || isBalanceUnverified.value) {
     return
   }
 
@@ -659,7 +680,7 @@ function openTransaction(action) {
 }
 
 async function enterCustomerToday() {
-  if (isSavingTransaction.value || !customer.value) {
+  if (isSavingTransaction.value || isBalanceUnverified.value || !customer.value) {
     return
   }
 
@@ -674,33 +695,22 @@ async function enterCustomerToday() {
     return
   }
 
-  const previousCustomer = {
-    ...customer.value,
-  }
-
   isSavingTransaction.value = true
   isEntrySaving.value = true
+  isBalanceUnverified.value = true
 
   try {
     const result = await enterCustomer(customerCode.value)
 
-    presenceActiveToday.value = true
-
-    customer.value = {
-      ...customer.value,
-      currentBalance: result.newBalance,
-      lastVisit: result.timestamp.slice(0, 10),
-      visitCount:
-        result.visitCount ?? customer.value.visitCount,
-      activeToday: true,
-    }
+    customer.value = await getCustomer(customerCode.value, true)
+    presenceActiveToday.value = customer.value.activeToday
+    isBalanceUnverified.value = Boolean(result.attendanceSyncPending)
+    if (result.attendanceSyncPending) window.alert('来店状況を確認できません。操作を繰り返さず、スタッフに確認してください。')
 
     recordRecentCustomer(customer.value)
     cacheCustomer(customer.value)
   } catch (error) {
     console.error(error)
-
-    customer.value = previousCustomer
 
     window.alert(
       error.message || '入店の記録に失敗しました',
@@ -996,35 +1006,32 @@ function getBalanceBefore(transaction) {
   )
 }
 
-function applyCustomerPresence(activeToday) {
-  presenceActiveToday.value = Boolean(activeToday)
-
-  if (!customer.value) {
-    return
+async function refreshTransactionDraft(dayChanged) {
+  if (isSavingTransaction.value) throw new Error('Save is still in progress')
+  const previousBalance = customer.value?.currentBalance
+  const previousActive = customer.value?.activeToday
+  isBalanceUnverified.value = true
+  const loaded = await getCustomer(customerCode.value)
+  customer.value = loaded
+  presenceActiveToday.value = Boolean(loaded.activeToday)
+  history.value = []
+  historyWarnings.value = []
+  isBalanceUnverified.value = false
+  recordRecentCustomer(loaded)
+  if (dayChanged || (selectedAction.value === 'checkout' && !loaded.activeToday)) {
+    closeAction()
+  } else if (previousBalance !== loaded.currentBalance || previousActive !== loaded.activeToday) {
+    transactionSuccess.value = '最新の記録に更新しました。金額を確認してから実行してください。'
   }
-
-  customer.value = {
-    ...customer.value,
-    activeToday: presenceActiveToday.value,
-  }
-
-  cacheCustomer(customer.value)
 }
 
-async function refreshCustomerPresence() {
-  try {
-    const presence = await getCustomerPresence(
-      customerCode.value,
-    )
-
-    applyCustomerPresence(presence.activeToday)
-  } catch (error) {
-    console.error(error)
-  }
+function handleDraftRefresh(event) {
+  event.detail.waitUntil(refreshTransactionDraft(event.detail.dayChanged))
 }
 
 async function loadCustomer() {
   presenceActiveToday.value = null
+  isBalanceUnverified.value = true
 
   const cachedCustomer = getCachedCustomer(
     customerCode.value,
@@ -1038,11 +1045,10 @@ async function loadCustomer() {
   isLoading.value = !cachedCustomer
   errorMessage.value = ''
 
-  refreshCustomerPresence()
-
   try {
     const loadedCustomer = await getCustomer(
       customerCode.value,
+      true,
     )
 
     customer.value = {
@@ -1054,14 +1060,13 @@ async function loadCustomer() {
 
     cacheCustomer(customer.value)
     recordRecentCustomer(customer.value)
+    isBalanceUnverified.value = false
   } catch (error) {
     console.error(error)
 
-    if (!cachedCustomer) {
-      errorMessage.value =
+    errorMessage.value =
         error.message ||
         'おともだち情報の取得に失敗しました'
-    }
   } finally {
     isLoading.value = false
   }
@@ -1072,39 +1077,26 @@ async function showHistory() {
   transactionError.value = ''
   transactionSuccess.value = ''
 
-  if (history.value.length > 0) {
-    await scrollChartToNewest()
-    return
-  }
-
-  const cachedHistory = getCachedHistory(
-    customerCode.value,
-    'all',
-  )
-  const hasCachedHistory = cachedHistory.length > 0
-
-  if (hasCachedHistory) {
-    history.value = cachedHistory
-    await scrollChartToNewest()
-  }
-
-  isHistoryLoading.value = !hasCachedHistory
+  history.value = []
+  historyWarnings.value = []
+  isHistoryLoading.value = true
 
   try {
-    history.value = await getHistory(
+    const report = await getHistoryReport(
       customerCode.value,
       'all',
+      true,
     )
+    history.value = report.transactions
+    historyWarnings.value = report.warnings
 
     await scrollChartToNewest()
   } catch (error) {
     console.error(error)
 
-    if (!hasCachedHistory) {
-      transactionError.value =
+    transactionError.value =
         error.message ||
         '履歴の取得に失敗しました'
-    }
   } finally {
     isHistoryLoading.value = false
 
@@ -1114,6 +1106,8 @@ async function showHistory() {
 
 
 async function saveTransaction() {
+  if (isSavingTransaction.value || isBalanceUnverified.value || !customer.value) return
+
   transactionError.value = ''
   transactionSuccess.value = ''
 
@@ -1143,7 +1137,6 @@ async function saveTransaction() {
   const change = transactionChange.value
   const oldBalance = currentBalance.value
   const newBalance = oldBalance + change
-  const oldLastVisit = customer.value.lastVisit
 
   const confirmed = window.confirm(
     [
@@ -1164,6 +1157,7 @@ async function saveTransaction() {
   }
 
   isSavingTransaction.value = true
+  isBalanceUnverified.value = true
   transactionError.value = ''
   transactionSuccess.value = '保存しています…'
 
@@ -1172,25 +1166,17 @@ async function saveTransaction() {
       ? await checkoutCustomer(
           customerCode.value,
           amount,
+          oldBalance,
         )
       : await addTransaction(
           customerCode.value,
           change,
+          oldBalance,
         )
 
-    presenceActiveToday.value = !isCheckout
-
-    /*
-     * Use the confirmed value returned by Apps Script.
-     */
-    customer.value = {
-      ...customer.value,
-      currentBalance: result.newBalance,
-      lastVisit: result.timestamp.slice(0, 10),
-      visitCount:
-        result.visitCount ?? customer.value.visitCount,
-      activeToday: !isCheckout,
-    }
+    customer.value = result.customer
+    presenceActiveToday.value = customer.value.activeToday
+    isBalanceUnverified.value = Boolean(result.attendanceSyncPending)
 
     recordRecentCustomer(customer.value)
     cacheCustomer(customer.value)
@@ -1207,6 +1193,15 @@ async function saveTransaction() {
     transactionSuccess.value = '保存しました'
     amountText.value = ''
 
+    if (result.attendanceSyncPending) {
+      window.alert('うにょは保存されました。来店中リストの更新に失敗しました。うにょ操作は繰り返さず、スタッフに確認してください。')
+    }
+    if (isCheckout) {
+      selectedAction.value = ''
+      transactionSuccess.value = ''
+      return
+    }
+
     window.setTimeout(() => {
       transactionSuccess.value = ''
       closeAction()
@@ -1214,16 +1209,14 @@ async function saveTransaction() {
   } catch (error) {
     console.error(error)
 
-    customer.value = {
-      ...customer.value,
-      currentBalance: oldBalance,
-      lastVisit: oldLastVisit,
-    }
-
+    history.value = []
+    clearCustomerHistoryCache(customerCode.value)
     transactionSuccess.value = ''
 
     transactionError.value =
-      error.message || '保存に失敗しました'
+      ['BALANCE_CHANGED', 'CHECKOUT_NOT_ACTIVE', 'CLIENT_UPDATE_REQUIRED'].includes(error.code)
+        ? error.message
+        : '保存結果は未確認です。操作を繰り返さず、スタッフに記録の確認をお願いしてください。\n' + (error.message || '')
   } finally {
     isSavingTransaction.value = false
   }
@@ -1246,6 +1239,7 @@ function getActionName(action) {
 }
 
 onMounted(() => {
+  window.addEventListener('otomo-sync-refresh-draft', handleDraftRefresh)
   loadCustomer()
   document.addEventListener(
     'fullscreenchange',
@@ -1254,6 +1248,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('otomo-sync-refresh-draft', handleDraftRefresh)
+  setEditInProgress(false)
   document.removeEventListener(
     'fullscreenchange',
     syncHistoryChartFullscreen,
@@ -1340,7 +1336,7 @@ onBeforeUnmount(() => {
           <span>現在のうにょ</span>
 
           <strong>
-            {{ formatNumber(customer.currentBalance) }}
+            {{ isBalanceUnverified ? '未確認' : formatNumber(customer.currentBalance) }}
           </strong>
 
           <small>うにょ</small>
@@ -1371,6 +1367,7 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="action-button action-button--deposit"
+            :disabled="isSavingTransaction || isBalanceUnverified"
             @click="openTransaction('deposit')"
           >
             <span class="action-icon">＋</span>
@@ -1383,6 +1380,7 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="action-button action-button--withdrawal"
+            :disabled="isSavingTransaction || isBalanceUnverified"
             @click="openTransaction('withdrawal')"
           >
             <span class="action-icon">－</span>
@@ -1400,7 +1398,7 @@ onBeforeUnmount(() => {
                 ? 'action-button--checkout'
                 : 'action-button--entry'
             "
-            :disabled="isSavingTransaction"
+            :disabled="isSavingTransaction || isBalanceUnverified"
             @click="handleAttendanceAction"
           >
             <span class="action-icon">
@@ -1529,11 +1527,11 @@ onBeforeUnmount(() => {
 
                 <div class="balance-preview">
                   <div>
-                    <span>現在</span>
+                    <span>{{ isSavingTransaction ? '変更前' : '現在' }}</span>
 
                     <strong>
                       {{
-                        formatNumber(currentBalance)
+                        showTransactionBalances ? formatNumber(currentBalance) : '未確認'
                       }}
                     </strong>
                   </div>
@@ -1543,7 +1541,7 @@ onBeforeUnmount(() => {
                   </span>
 
                   <div>
-                    <span>変更後</span>
+                    <span>変更後（予定）</span>
 
                     <strong
                       :class="{
@@ -1551,7 +1549,7 @@ onBeforeUnmount(() => {
                           isWithdrawalTooLarge,
                       }"
                     >
-                      {{ formatNumber(expectedBalance) }}
+                      {{ showTransactionBalances ? formatNumber(expectedBalance) : '未確認' }}
                     </strong>
                   </div>
                 </div>
@@ -1652,6 +1650,26 @@ onBeforeUnmount(() => {
               </div>
 
 <div v-else>
+  <aside v-if="!isHistoryLoading && historyWarnings.length" class="history-warning" role="status">
+    <p>うにょログに統合できないところがあります。メリーに確認お願いしてください</p>
+    <details>
+      <summary>詳細を確認（{{ historyWarnings.length }}件）</summary>
+      <ul>
+        <li v-for="(warning, index) in historyWarnings" :key="index">
+          <strong>{{ warning.sheet }} {{ warning.row }}行目</strong>
+          <p v-if="warning.reason === 'HISTORY_CHAIN_MISMATCH'">
+            {{ warning.previousDate }}（{{ warning.previousRow }}行目）残高 {{ formatNumber(warning.previousAfter) }}
+            → {{ warning.date }} 開始残高 {{ formatNumber(warning.before) }}
+          </p>
+          <p v-else-if="warning.reason === 'HISTORY_END_MISMATCH'">
+            {{ warning.historyDate }} 記録上の残高 {{ formatNumber(warning.historyBalance) }}
+            ／ 現在の残高 {{ formatNumber(warning.masterBalance) }}
+          </p>
+          <p v-else>日付または金額を確認できません。開始: {{ warning.recordedBefore }} ／ 終了: {{ warning.recordedAfter }} ／ 増減: {{ warning.recordedChange }}</p>
+        </li>
+      </ul>
+    </details>
+  </aside>
   <p
     v-if="isHistoryLoading"
     class="state-message"
@@ -1670,7 +1688,7 @@ onBeforeUnmount(() => {
     v-else-if="history.length === 0"
     class="state-message"
   >
-    履歴はありません
+    {{ historyWarnings.length ? '確認できる履歴はありません' : '履歴はありません' }}
   </p>
 
   <template v-else>
@@ -1684,12 +1702,12 @@ onBeforeUnmount(() => {
     >
       <div class="history-chart-header">
         <div>
-          <span>残高推移</span>
+          <span>{{ historyWarnings.length ? '記録上の残高推移' : '残高推移' }}</span>
 
           <strong>
             {{
               formatNumber(
-                customer.currentBalance,
+                history[0].balanceAfter,
               )
             }}
           </strong>
@@ -1749,8 +1767,9 @@ onBeforeUnmount(() => {
           />
 
           <polyline
-            v-if="chartPoints.length > 1"
-            :points="chartPolylinePoints"
+            v-for="(segment, index) in chartPolylineSegments"
+            :key="index"
+            :points="segment"
             class="chart-line"
             :class="{
               'chart-line--dense': isDenseChart,
@@ -2006,6 +2025,20 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.history-warning {
+  margin-bottom: 18px;
+  padding: 14px 0;
+  border-block: 1px solid #c6a044;
+  color: #674b0c;
+  font-size: 14px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.history-warning p { margin: 0 0 8px; }
+.history-warning summary { cursor: pointer; font-weight: 700; }
+.history-warning summary:focus-visible { outline: 2px solid #193b56; outline-offset: 4px; }
+.history-warning ul { padding-left: 20px; max-height: 240px; overflow-y: auto; }
+.history-warning li + li { margin-top: 12px; }
 .customer-page {
   width: min(100%, 960px);
   min-height: 100vh;

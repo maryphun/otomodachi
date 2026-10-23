@@ -1,10 +1,11 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 
 import {
   cacheCustomer,
   createCustomer,
+  setEditInProgress,
 } from '../services/api'
 import {
   recordRecentCustomer,
@@ -17,6 +18,14 @@ const router = useRouter()
 
 const customerName = ref('')
 const initialBalanceText = ref('')
+watch([customerName, initialBalanceText], () => setEditInProgress(Boolean(customerName.value || initialBalanceText.value)), { flush: 'sync' })
+// This draft has no existing customer balance to refresh.
+function handleDraftRefresh(event) { event.detail.waitUntil(Promise.resolve()) }
+onMounted(() => window.addEventListener('otomo-sync-refresh-draft', handleDraftRefresh))
+onBeforeUnmount(() => {
+  setEditInProgress(false)
+  window.removeEventListener('otomo-sync-refresh-draft', handleDraftRefresh)
+})
 
 const isSaving = ref(false)
 const errorMessage = ref('')
@@ -111,6 +120,7 @@ function formatNumber(value) {
 }
 
 async function submitCustomer() {
+  if (isSaving.value) return
   errorMessage.value = ''
 
   if (!normalizedName.value) {
