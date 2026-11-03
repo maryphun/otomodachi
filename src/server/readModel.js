@@ -199,11 +199,11 @@ function reconciliationRequired() {
 }
 
 // Read these barriers in the same statement as the snapshot, not from a cache.
-const pendingSelection = `(SELECT json_group_array(customer_code) FROM
-  (SELECT DISTINCT customer_code FROM read_model_pending_writes ORDER BY customer_code)) AS pending_json`
+const pendingSelection = `(SELECT json_group_array(json_object('code', customer_code, 'requestId', request_id)) FROM
+  (SELECT customer_code, request_id FROM read_model_pending_writes ORDER BY request_id)) AS pending_json`
 
 function pendingCustomers(row) {
-  const codes = JSON.parse(row.pending_json || '[]')
+  const codes = [...new Set(JSON.parse(row.pending_json || '[]').map(item => item.code))]
   // An unresolved registration has no customer identity yet: retain the global guard.
   if (codes.some(code => !/^\d{4}$/.test(code))) throw unavailable()
   return codes

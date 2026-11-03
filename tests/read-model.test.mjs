@@ -173,6 +173,7 @@ test('one unresolved checkout cannot lock unrelated customers, but its balance a
     await assert.rejects(model.readResource(s.env, key), { code: 'CUSTOMER_RECONCILIATION_REQUIRED' })
   }
   assert.equal(JSON.stringify(list.sync).includes('0425'), false, 'Public sync metadata must not expose other customer IDs')
+  assert.equal(JSON.stringify(list.sync).includes(id), false, 'Public sync metadata must not expose request IDs')
   const before = s.sql.prepare('SELECT * FROM read_model_pending_writes').all()
   await assert.rejects(model.beginReadModelWrite(s.env, { requestId: 'another-request-0425',
     action: 'enterCustomer', customerCode: '425' }), { code: 'CUSTOMER_RECONCILIATION_REQUIRED' })
@@ -183,6 +184,9 @@ test('one unresolved checkout cannot lock unrelated customers, but its balance a
   await model.publishReadModel(s.env, { ...data, sourceUpdatedAt: new Date().toISOString() }, 2)
   assert.equal((await model.readResource(s.env, 'customer:0001')).data.currentBalance, 1000)
   assert.equal(s.sql.prepare('SELECT request_id FROM read_model_pending_writes').get().request_id, id)
+  s.sql.prepare('UPDATE read_model_pending_writes SET request_id = ?').run('different-unresolved-request')
+  assert.notEqual((await model.readModelStatus(s.env)).pendingRevision, status.pendingRevision,
+    'Public pending revision must include request entropy, not a guessable customer-code hash')
 })
 
 test('unknown registrations and stale or dirty snapshots retain global read protection', async () => {
