@@ -150,6 +150,63 @@ test('unknown writes remain blocked until a matching durable Sheets receipt prov
   assert.equal((await model.readResource(s.env, 'customer:0001')).data.currentBalance, 2000)
 })
 
+test('one unresolved checkout cannot lock unrelated customers, but its balance and aggregate totals stay protected', async () => {
+  const s = setup()
+  const data = snapshot()
+  const blocked = { customerCode: '0425', customerName: 'Review', currentBalance: 117100,
+    activeToday: true, lastVisit: '2026/11/02' }
+  data.resources[0].payload.push(blocked)
+  data.resources.push({ key: 'customer:0425', payload: blocked }, { key: 'history:0425', payload: [] })
+  const id = 'unresolved-checkout-0425'
+  await model.beginReadModelWrite(s.env, { requestId: id, action: 'checkoutCustomer', customerCode: '0425' })
+  await assert.rejects(model.readModelStatus(s.env), { code: 'READ_MODEL_UNAVAILABLE' })
+  await model.publishReadModel(s.env, data, 1)
+  const status = await model.readModelStatus(s.env)
+  assert.deepEqual(status.pendingCustomerCodes, ['0425'])
+  const list = await model.readResource(s.env, 'customers')
+  assert.equal(list.data.length, 2)
+  assert.equal(list.data[1].currentBalance, null)
+  assert.equal(list.data[1].needsReconciliation, true)
+  assert.equal('activeToday' in list.data[1], false)
+  assert.equal((await model.readResource(s.env, 'customer:0001')).data.currentBalance, 1000)
+  for (const key of ['customer:0425', 'history:0425', 'todayHistory', 'activeCustomers']) {
+    await assert.rejects(model.readResource(s.env, key), { code: 'CUSTOMER_RECONCILIATION_REQUIRED' })
+  }
+  assert.equal(JSON.stringify(list.sync).includes('0425'), false, 'Public sync metadata must not expose other customer IDs')
+  const before = s.sql.prepare('SELECT * FROM read_model_pending_writes').all()
+  await assert.rejects(model.beginReadModelWrite(s.env, { requestId: 'another-request-0425',
+    action: 'enterCustomer', customerCode: '425' }), { code: 'CUSTOMER_RECONCILIATION_REQUIRED' })
+  assert.deepEqual(s.sql.prepare('SELECT * FROM read_model_pending_writes').all(), before)
+  await model.beginReadModelWrite(s.env, { requestId: 'another-request-0001', action: 'addTransaction', customerCode: '0001' })
+  assert.equal(s.sql.prepare('SELECT COUNT(*) AS n FROM read_model_pending_writes').get().n, 2)
+  await model.finishReadModelWrite(s.env, 'another-request-0001')
+  await model.publishReadModel(s.env, { ...data, sourceUpdatedAt: new Date().toISOString() }, 2)
+  assert.equal((await model.readResource(s.env, 'customer:0001')).data.currentBalance, 1000)
+  assert.equal(s.sql.prepare('SELECT request_id FROM read_model_pending_writes').get().request_id, id)
+})
+
+test('unknown registrations and stale or dirty snapshots retain global read protection', async () => {
+  const s = setup()
+  await model.beginReadModelWrite(s.env, { requestId: 'pending-new-customer', action: 'createCustomer' })
+  await model.publishReadModel(s.env, snapshot(), 1)
+  await assert.rejects(model.readModelStatus(s.env), { code: 'READ_MODEL_UNAVAILABLE' })
+  await assert.rejects(model.readResource(s.env, 'customers'), { code: 'READ_MODEL_UNAVAILABLE' })
+  await model.finishReadModelWrite(s.env, 'pending-new-customer')
+  s.sql.exec("UPDATE read_model_state SET checked_at='2020-01-01T00:00:00.000Z'")
+  await assert.rejects(model.readModelStatus(s.env), { code: 'READ_MODEL_UNAVAILABLE' })
+})
+
+test('same-customer concurrent requests cannot both reserve new chip writes', async () => {
+  const s = setup()
+  const results = await Promise.allSettled([
+    model.beginReadModelWrite(s.env, { requestId: 'concurrent-request-one', action: 'addTransaction', customerCode: '0425' }),
+    model.beginReadModelWrite(s.env, { requestId: 'concurrent-request-two', action: 'checkoutCustomer', customerCode: '0425' }),
+  ])
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1)
+  assert.equal(results.find(result => result.status === 'rejected').reason.code, 'CUSTOMER_RECONCILIATION_REQUIRED')
+  assert.equal(s.sql.prepare('SELECT COUNT(*) AS n FROM read_model_pending_writes').get().n, 1)
+})
+
 test('stale, wrong-day, incomplete and unverified snapshots never become trusted balances', async () => {
   const s = setup()
   const data = snapshot()

@@ -25,6 +25,7 @@ function readSync(sync) {
   return {
     sourceUpdatedAt: String(sync.sourceUpdatedAt),
     businessDate: sync.businessDate,
+    pendingRevision: sync.pendingRevision || '',
   }
 }
 
@@ -41,14 +42,17 @@ function observeSync(sync) {
   if (!initialSync) {
     initialSync = next
   } else if (next.sourceUpdatedAt !== initialSync.sourceUpdatedAt ||
-      next.businessDate !== initialSync.businessDate) {
+      next.businessDate !== initialSync.businessDate || next.pendingRevision !== initialSync.pendingRevision) {
     // Keep the baseline until reload so another read cannot hide a change.
     serverChanged = true
   }
 }
 
 export async function checkServerChanges(onWaiting) {
-  await apiGet('getSyncStatus', {}, false, onWaiting)
+  const status = await apiGet('getSyncStatus', {}, false, onWaiting)
+  window.dispatchEvent?.(new CustomEvent('otomo-pending-customers', {
+    detail: { codes: Array.isArray(status?.pendingCustomerCodes) ? status.pendingCustomerCodes : [] },
+  }))
   return serverChanged
 }
 
@@ -74,11 +78,12 @@ export function hasPendingWrites() {
   return editInProgress || hasUnresolvedWrites()
 }
 
-export function hasUnresolvedWrites() {
+export function hasUnresolvedWrites(customerCode) {
   if (writesInFlight > 0) return true
   try {
     for (let index = 0; index < sessionStorage.length; index++) {
-      if (/^otomodachi-(checkout|transaction)-pending-/.test(sessionStorage.key(index))) {
+      const match = /^otomodachi-(checkout|transaction)-pending-(\d{4})$/.exec(sessionStorage.key(index))
+      if (match && (!customerCode || match[2] === normalizeCustomerCode(customerCode))) {
         return true
       }
     }
@@ -87,6 +92,11 @@ export function hasUnresolvedWrites() {
     // Do not interrupt unresolved writes when storage is inaccessible.
     return true
   }
+}
+
+export function hasUnresolvedWritesForCurrentCustomer() {
+  const code = /^#\/customer\/(\d{1,4})(?:[/?]|$)/.exec(window.location.hash || '')?.[1]
+  return code ? hasUnresolvedWrites(code) : false
 }
 
 export function clearLegacyFinancialCaches() {
@@ -297,11 +307,13 @@ function normalizeSearchText(value) {
 }
 
 function normalizeCustomer(customer) {
-  if (!customer?.customerCode || !Number.isSafeInteger(customer.currentBalance)) {
+  if (!customer?.customerCode ||
+      (!customer.needsReconciliation && !Number.isSafeInteger(customer.currentBalance))) {
     throw new Error('なんかおかしい...メリーに確認して')
   }
   return {
     ...customer,
+    currentBalance: customer.needsReconciliation ? null : customer.currentBalance,
     customerCode: normalizeCustomerCode(customer.customerCode),
     normalizedCustomerCode: normalizeCustomerCode(customer.customerCode).replace(/^0+/, ''),
     normalizedCustomerName: normalizeSearchText([customer.customerName, customer.customerReading].join(' ')),

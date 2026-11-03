@@ -58,6 +58,38 @@ test('all customer reads contact the server, and do not persist a financial cach
   assert.equal(c.sessionStorage.length, 0)
 })
 
+test('an unresolved customer remains protected without blocking other routes or deleting their receipt', () => {
+  const c = setup(() => assert.fail('No network needed'))
+  c.sessionStorage.setItem('otomodachi-checkout-pending-0425', 'original-receipt')
+  c.window.location.hash = '#/customer/0425'
+  assert.equal(c.hasUnresolvedWritesForCurrentCustomer(), true)
+  for (const route of ['#/', '#/code-search', '#/customer/0537']) {
+    c.window.location.hash = route
+    assert.equal(c.hasUnresolvedWritesForCurrentCustomer(), false)
+  }
+  assert.equal(c.hasUnresolvedWrites(), true)
+  assert.equal(c.sessionStorage.getItem('otomodachi-checkout-pending-0425'), 'original-receipt')
+})
+
+test('search lists keep unresolved customer identities but never turn their balance into zero', async () => {
+  const c = setup(async () => response([customer,
+    { customerCode: '0425', customerName: 'Needs review', currentBalance: null, needsReconciliation: true }]))
+  const list = await c.getAllCustomers()
+  assert.equal(list[0].currentBalance, 1000)
+  assert.equal(list[1].currentBalance, null)
+  assert.equal(list[1].needsReconciliation, true)
+  assert.equal(list[1].normalizedCustomerCode, '425')
+})
+
+test('pending-customer changes refresh a screen even when the financial snapshot did not change', async () => {
+  let pendingRevision = 'clear'
+  const c = setup(async () => Response.json({ success: true, data: {}, sync: {
+    sourceUpdatedAt: '2026-11-03T07:00:00.000Z', businessDate: '2026-11-03', pendingRevision } }))
+  assert.equal(await c.checkServerChanges(), false)
+  pendingRevision = 'blocked'
+  assert.equal(await c.checkServerChanges(), true)
+})
+
 test('history diagnostics refresh and current conflicts use the approved staff wording', async () => {
   let warnings = [{ reason: 'HISTORY_CHAIN_MISMATCH', row: 6057 }]
   const c = setup(async () => Response.json({ success: true, data: [], historyWarnings: warnings }))

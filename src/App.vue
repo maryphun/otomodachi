@@ -6,6 +6,8 @@ const syncUnavailable = ref(false)
 const syncRecovering = ref(false)
 const unresolvedSave = ref(false)
 const syncProblem = ref('')
+const pendingCustomerCodes = ref([])
+function updatePendingCustomers(event) { pendingCustomerCodes.value = event.detail?.codes || [] }
 function hideUnverifiedData(event) {
   syncUnavailable.value = true
   syncRecovering.value = Boolean(event.detail?.recovering)
@@ -18,10 +20,12 @@ function retrySync() { window.dispatchEvent(new CustomEvent('otomo-sync-retry'))
 onMounted(() => {
   window.addEventListener('otomo-sync-unavailable', hideUnverifiedData)
   window.addEventListener('otomo-sync-restored', restoreVerifiedData)
+  window.addEventListener('otomo-pending-customers', updatePendingCustomers)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('otomo-sync-unavailable', hideUnverifiedData)
   window.removeEventListener('otomo-sync-restored', restoreVerifiedData)
+  window.removeEventListener('otomo-pending-customers', updatePendingCustomers)
 })
 
 function resetPageScroll() {
@@ -40,11 +44,13 @@ function resetPageScroll() {
         <h1>操作結果の確認が必要です</h1>
         <p>前回の保存結果を確認できません。操作を繰り返さず、スタッフに記録の確認をお願いしてください。</p>
         <button type="button" @click="reloadPage">再読み込み</button>
+        <a class="recovery-home" href="/">ホームで他のお客様を操作</a>
       </template>
       <template v-else-if="syncProblem">
         <h1>記録を確認してください</h1>
         <p>{{ syncProblem }}</p>
         <button type="button" @click="retrySync">もう一度確認</button>
+        <a class="recovery-home" href="/">ホームで他のお客様を操作</a>
       </template>
       <template v-else>
         <span v-if="syncRecovering" class="sync-spinner" aria-hidden="true"></span>
@@ -54,6 +60,9 @@ function resetPageScroll() {
       </template>
     </section>
     <div :inert="syncUnavailable" :hidden="syncUnavailable">
+    <p v-if="pendingCustomerCodes.length" class="pending-customer-notice" role="status">
+      確認待ち：{{ pendingCustomerCodes.join('、') }}。該当のお客様は再入力せず、メリーに確認してください。他のお客様は検索から操作できます。
+    </p>
     <RouterView v-slot="{ Component, route }">
       <Transition
         name="page-slide"
@@ -70,6 +79,16 @@ function resetPageScroll() {
 </template>
 
 <style>
+.pending-customer-notice {
+  max-width: 960px;
+  margin: 12px auto;
+  padding: 12px 16px;
+  background: #fff3e5;
+  color: #713f12;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.recovery-home { display: block; margin-top: 24px; color: #193b56; text-decoration: underline; }
 .sync-unavailable {
   max-width: 540px;
   margin: 0 auto;

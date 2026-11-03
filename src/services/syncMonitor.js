@@ -1,6 +1,6 @@
 import {
   checkServerChanges, acknowledgeServerChanges, isWriteInFlight,
-  hasUnresolvedWrites, isEditInProgress, hasBusinessDateChanged,
+  hasUnresolvedWritesForCurrentCustomer, isEditInProgress, hasBusinessDateChanged,
 } from './api'
 
 export function startSyncMonitor() {
@@ -28,7 +28,7 @@ export function startSyncMonitor() {
     try {
       refreshPending = (await checkServerChanges(() => {
         refreshPending = true
-        if (!isWriteInFlight()) notify(true, hasUnresolvedWrites())
+        if (!isWriteInFlight()) notify(true, hasUnresolvedWritesForCurrentCustomer())
       })) || refreshPending
       // A save can start while the status request is in flight. Never interrupt it.
       if (isWriteInFlight()) {
@@ -36,7 +36,7 @@ export function startSyncMonitor() {
         return
       }
       if (!refreshPending || document.visibilityState !== 'visible') return
-      if (hasUnresolvedWrites()) {
+      if (hasUnresolvedWritesForCurrentCustomer()) {
         notify(false, true)
         return
       }
@@ -48,7 +48,7 @@ export function startSyncMonitor() {
         }))
         if (!refreshes.length) throw new Error('No active draft refresh handler')
         await Promise.all(refreshes)
-        if (isWriteInFlight() || hasUnresolvedWrites()) {
+        if (isWriteInFlight() || hasUnresolvedWritesForCurrentCustomer()) {
           retryLater()
           return
         }
@@ -63,7 +63,8 @@ export function startSyncMonitor() {
       console.error('Could not refresh server data', error)
       refreshPending = true
       if (!isWriteInFlight()) {
-        notify(false, hasUnresolvedWrites(), error.code === 'RECORD_VERIFICATION_REQUIRED' ? error.message : '')
+        notify(false, hasUnresolvedWritesForCurrentCustomer(),
+          ['RECORD_VERIFICATION_REQUIRED', 'CUSTOMER_RECONCILIATION_REQUIRED'].includes(error.code) ? error.message : '')
       }
       retryLater()
     } finally {

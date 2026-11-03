@@ -178,6 +178,59 @@ try {
     assert.equal(writes, 0)
     assert.deepEqual(errors, [])
     for (const context of contexts) await context.close()
+    const recoveryContext = await browser.newContext({ viewport })
+    const recovery = await recoveryContext.newPage()
+    recovery.on('pageerror', error => errors.push(error.message))
+    await recovery.clock.install()
+    await recovery.addInitScript(() => {
+      sessionStorage.setItem('otomodachi-checkout-pending-0425', JSON.stringify({ requestId: 'original-unresolved-request', amount: 58700 }))
+    })
+    await recovery.route('**/*', async route => {
+      const url = new URL(route.request().url())
+      if (url.hostname !== '127.0.0.1') return route.abort()
+      const action = url.searchParams.get('action')
+      if (!action) return route.continue()
+      const sync = { sourceUpdatedAt: '2026-11-03T07:00:00.000Z', businessDate: '2026-11-03', pendingRevision: 'pending-customer' }
+      let data
+      if (action === 'getSyncStatus') data = { ...sync, pendingCustomerCodes: ['0425'] }
+      else if (action === 'getAllCustomers') data = [
+        { customerCode: '0001', customerName: '検証用', currentBalance: 1000 },
+        { customerCode: '0425', customerName: '確認用', currentBalance: null, needsReconciliation: true },
+      ]
+      else if (action === 'getCustomer' && url.searchParams.get('customerCode') === '0001') {
+        data = { customerCode: '0001', customerName: '検証用', currentBalance: 1000, activeToday: true }
+      } else if (['getCustomer', 'getTodayHistory', 'getTodayActiveCustomers'].includes(action)) {
+        return route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({
+          success: false, code: 'CUSTOMER_RECONCILIATION_REQUIRED', error: '確認待ちです。ホームで他のお客様を操作できます。' }) })
+      } else throw new Error('Unexpected recovery request: ' + action)
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, data, sync }) })
+    })
+    await recovery.goto(base + '/#/customer/0425')
+    await recovery.getByText('確認待ちです。ホームで他のお客様を操作できます。', { exact: true }).waitFor()
+    await recovery.evaluate(() => window.dispatchEvent(new Event('otomo-sync-retry')))
+    await recovery.locator('.pending-customer-notice').waitFor()
+    await recovery.evaluate(() => window.dispatchEvent(new Event('otomo-read-recovery-needed')))
+    await recovery.clock.runFor(6000)
+    await recovery.getByRole('link', { name: 'ホームで他のお客様を操作' }).click()
+    await recovery.getByRole('heading', { name: 'おともだちポーカー' }).waitFor()
+    await recovery.clock.runFor(31000)
+    await recovery.locator('.pending-customer-notice').waitFor()
+    assert.equal(await recovery.locator('.sync-unavailable').count(), 0)
+    await recovery.goto(base + '/#/code-search')
+    for (const digit of '0425') await recovery.getByRole('button', { name: digit, exact: true }).click()
+    await recovery.getByText('要確認', { exact: true }).waitFor()
+    const reviewCard = recovery.getByRole('button').filter({ hasText: '確認用' })
+    assert.equal(await reviewCard.locator('.suggestion-balance strong').innerText(), '要確認')
+    await recovery.clock.runFor(600)
+    await recovery.screenshot({ path: join(tmpdir(), `otomodachi-isolated-${name}.png`), fullPage: true })
+    await recovery.goto(base + '/#/customer/0001')
+    await recovery.locator('.balance-panel strong').filter({ hasText: /^1,000$/ }).waitFor()
+    await recovery.clock.runFor(31000)
+    assert.equal(await recovery.locator('.sync-unavailable').count(), 0)
+    assert.ok(await recovery.evaluate(() => sessionStorage.getItem('otomodachi-checkout-pending-0425')))
+    assert.equal(await recovery.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
+    assert.deepEqual(errors, [])
+    await recoveryContext.close()
     console.log(`${name}: two devices, timestamp refresh, draft protection, stale-cache removal and sync failures passed`)
   }
 } finally {

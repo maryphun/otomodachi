@@ -69,6 +69,7 @@ function goBack() {
 }
 
 function formatCustomerMeta(customer) {
+  if (customer.needsReconciliation) return '記録の確認待ち'
   if (!customer.lastVisit) {
     return '来店記録なし'
   }
@@ -270,13 +271,13 @@ onMounted(loadCustomers)
             <span class="suggestion-balance">
               <strong>
                 {{
-                  customer.currentBalance.toLocaleString(
+                  customer.needsReconciliation ? '要確認' : customer.currentBalance.toLocaleString(
                     'ja-JP',
                   )
                 }}
               </strong>
 
-              <small>うにょ</small>
+              <small v-if="!customer.needsReconciliation">うにょ</small>
             </span>
 
             <span class="suggestion-arrow">→</span>

@@ -28,7 +28,7 @@ function setup() {
     CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options?.detail } },
     checkServerChanges: async () => state.changed,
     acknowledgeServerChanges() { acknowledged++; state.changed = false },
-    isWriteInFlight: () => state.writing, hasUnresolvedWrites: () => state.unresolved,
+    isWriteInFlight: () => state.writing, hasUnresolvedWritesForCurrentCustomer: () => state.unresolved,
     isEditInProgress: () => state.editing, hasBusinessDateChanged: () => state.dayChanged,
   })
   vm.runInContext(source, context)

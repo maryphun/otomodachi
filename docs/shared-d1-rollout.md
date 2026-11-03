@@ -6,6 +6,27 @@ rollout sequence, including its temporary disabled state; they are not instructi
 to disable an already-active installation. Follow the recovery section for an
 existing deployment.
 
+## 1.12.1 recovery behavior (2026-11-03)
+
+After a fresh, clean snapshot is published, an unresolved operation for a known
+customer blocks that customer's detail, history and new operations, rather than
+blocking the entire app. Search lists retain their identity with a `要確認` label
+and no balance, attendance or visit data. Other verified customers remain usable.
+Today's aggregate history and attendance lists remain unavailable while a pending
+customer could affect their totals. Unknown-customer registrations, dirty snapshots,
+expired snapshots and incorrect business dates still block shared reads.
+
+Browser recovery preserves unresolved receipt IDs and provides a link back to the
+home screen. A receipt belonging to another customer no longer traps the current
+screen. Sync metadata notices changes to pending-customer protection even when
+the financial snapshot has not changed. Public responses contain only a digest
+of that protection state, never another customer's identifier.
+
+The change does not delete pending operations, retry chip writes, or establish
+whether an uncertain checkout was saved. Reconcile that customer's source daily
+row, change log, master and exact receipt before resolving its barrier. Staff
+must not re-enter previous-day activity into today's sheet as a workaround.
+
 ## Ownership
 
 | Location | Responsibility |
@@ -191,7 +212,8 @@ public QR page and history as well.
 - Current balances are checked against today's records when present and blocked
   for pending receipts, invalid amounts, or current-day conflicts. Blank master
   balances mean zero by shop policy; other malformed values remain blocked.
-  List pages fail closed if a current record is unverified, preserving honest totals.
+  Search lists show identity-only entries for unverified customers. Aggregate
+  lists fail closed when their totals cannot be verified.
 - Old log gaps are warnings, not proof that the current master balance is wrong.
   A manual three-month expiry is not synthesized into a transaction. Negative
   before-values are not automatically converted to positive. Invalid raw log

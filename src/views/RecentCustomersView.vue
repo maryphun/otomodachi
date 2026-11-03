@@ -196,7 +196,7 @@ onMounted(loadRecentCustomers)
 
             <strong>
               {{
-                formatNumber(
+                customer.needsReconciliation ? '要確認' : formatNumber(
                   customer.currentBalance,
                 )
               }}

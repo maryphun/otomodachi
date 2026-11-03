@@ -419,7 +419,7 @@ onMounted(loadCustomers)
 
             <strong>
               {{
-                Number(
+                customer.needsReconciliation ? '要確認' : Number(
                   customer.currentBalance || 0,
                 ).toLocaleString('ja-JP')
               }}

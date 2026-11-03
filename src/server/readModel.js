@@ -68,9 +68,13 @@ export async function beginReadModelWrite(env, parameters) {
   const db = database(env)
   const code = parameters.customerCode ? String(parameters.customerCode).trim().padStart(4, '0') : ''
   await db.prepare(
-    'INSERT OR IGNORE INTO read_model_pending_writes (request_id, action, customer_code, started_at) VALUES (?, ?, ?, ?)',
+    `INSERT OR IGNORE INTO read_model_pending_writes (request_id, action, customer_code, started_at)
+     SELECT ?1, ?2, ?3, ?4 WHERE NOT EXISTS (
+       SELECT 1 FROM read_model_pending_writes
+       WHERE request_id != ?1 AND (customer_code = ?3 OR customer_code = '' OR ?3 = ''))`,
   ).bind(id, parameters.action, code, new Date().toISOString()).run()
   const saved = await db.prepare('SELECT action, customer_code FROM read_model_pending_writes WHERE request_id = ?').bind(id).first()
+  if (!saved) throw reconciliationRequired()
   if (saved?.action !== parameters.action || saved?.customer_code !== code) throw unavailable('受付番号の内容が一致しません。')
   await invalidateReadModel(env)
   return id
@@ -174,41 +178,75 @@ export async function publishReadModel(env, snapshot, epoch) {
   }
 }
 
-function syncFrom(row) {
+async function syncFrom(row) {
   return { sourceUpdatedAt: row.source_updated_at, checkedAt: row.checked_at,
-    businessDate: row.business_date, revision: row.revision }
+    businessDate: row.business_date, revision: row.revision,
+    pendingRevision: await digest(row.pending_json || '[]') }
 }
 
 function assertReadable(row) {
-  if (!row || !row.revision || row.dirty || row.pending_count || row.business_date !== tokyoDate() ||
+  if (!row || !row.revision || row.dirty || row.business_date !== tokyoDate() ||
       !Number.isFinite(Date.parse(row.checked_at)) || Date.now() - Date.parse(row.checked_at) > MAX_AGE_MS) {
     throw unavailable()
   }
 }
 
+function reconciliationRequired() {
+  const error = new Error('このお客様の前回の操作結果を確認できません。再入力せず、メリーに確認してください。他のお客様はホームから操作できます。')
+  error.code = 'CUSTOMER_RECONCILIATION_REQUIRED'
+  error.status = 409
+  return error
+}
+
+// Read these barriers in the same statement as the snapshot, not from a cache.
+const pendingSelection = `(SELECT json_group_array(customer_code) FROM
+  (SELECT DISTINCT customer_code FROM read_model_pending_writes ORDER BY customer_code)) AS pending_json`
+
+function pendingCustomers(row) {
+  const codes = JSON.parse(row.pending_json || '[]')
+  // An unresolved registration has no customer identity yet: retain the global guard.
+  if (codes.some(code => !/^\d{4}$/.test(code))) throw unavailable()
+  return codes
+}
+
 export async function readModelStatus(env) {
-  const row = await database(env).prepare(`SELECT s.*,
-    (SELECT COUNT(*) FROM read_model_pending_writes) AS pending_count
+  const row = await database(env).prepare(`SELECT s.*, ${pendingSelection}
     FROM read_model_state s WHERE s.id = 1`).first()
   assertReadable(row)
-  return syncFrom(row)
+  const pendingCustomerCodes = pendingCustomers(row)
+  return { ...await syncFrom(row), pendingCustomerCodes }
 }
 
 export async function readResource(env, key) {
   const bucket = bucketFor(key)
   // State, pending-write guard, and data are read in the same SQL statement.
-  const row = await database(env).prepare(`SELECT s.*, b.payload,
-    (SELECT COUNT(*) FROM read_model_pending_writes) AS pending_count
+  const row = await database(env).prepare(`SELECT s.*, b.payload, ${pendingSelection}
     FROM read_model_state s LEFT JOIN read_model_blobs b
       ON b.digest = json_extract(s.manifest, ?1) WHERE s.id = 1`)
     .bind(`$."${bucket}"`).first()
   assertReadable(row)
+  const pending = new Set(pendingCustomers(row))
+  if (pending.has(key.split(':')[1])) throw reconciliationRequired()
+  // Totals and attendance must never silently omit an unresolved customer's activity.
+  if (pending.size && ['todayHistory', 'activeCustomers'].includes(key)) {
+    const error = reconciliationRequired()
+    error.message = '確認待ちのお客様がいるため、この一覧は表示できません。ホームの検索から他のお客様を操作できます。'
+    throw error
+  }
   const payload = row.payload && JSON.parse(row.payload)[key]
   if (payload === undefined || payload === null) throw unavailable('おともだちの同期済みデータが見つかりません。')
   if (payload.readModelError) {
     const error = unavailable('なんかおかしい...メリーに確認して')
     error.code = payload.readModelError.code || error.code
     throw error
+  }
+  if (key === 'customers' && Array.isArray(payload)) {
+    const data = payload.map(customer => {
+      if (!pending.has(customer.customerCode) && !customer.readModelError) return customer
+      return { customerCode: customer.customerCode, customerName: customer.customerName,
+        customerReading: customer.customerReading, currentBalance: null, needsReconciliation: true }
+    })
+    return { success: true, data, sync: await syncFrom(row) }
   }
   if (Array.isArray(payload) && payload.some(item => item?.readModelError)) {
     const error = unavailable('なんかおかしい...メリーに確認して')
@@ -217,9 +255,9 @@ export async function readResource(env, key) {
   }
   if (key.startsWith('history:') && !Array.isArray(payload)) {
     if (!Array.isArray(payload.transactions) || !Array.isArray(payload.warnings)) throw unavailable()
-    return { success: true, data: payload.transactions, historyWarnings: payload.warnings, sync: syncFrom(row) }
+    return { success: true, data: payload.transactions, historyWarnings: payload.warnings, sync: await syncFrom(row) }
   }
-  return { success: true, data: payload, sync: syncFrom(row) }
+  return { success: true, data: payload, sync: await syncFrom(row) }
 }
 
 export async function pruneReadModel(env) {
