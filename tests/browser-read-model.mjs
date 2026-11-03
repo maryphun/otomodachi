@@ -192,7 +192,8 @@ try {
       if (!action) return route.continue()
       const sync = { sourceUpdatedAt: '2026-11-03T07:00:00.000Z', businessDate: '2026-11-03', pendingRevision: 'pending-customer' }
       let data
-      if (action === 'getSyncStatus') data = { ...sync, pendingCustomerCodes: ['0425'] }
+      if (action === 'getSyncStatus') data = { ...sync, pendingCustomerCodes: ['0425'],
+        pendingCustomers: [{ customerCode: '0425', customerName: '確認用さん' }] }
       else if (action === 'getAllCustomers') data = [
         { customerCode: '0001', customerName: '検証用', currentBalance: 1000 },
         { customerCode: '0425', customerName: '確認用', currentBalance: null, needsReconciliation: true },
@@ -201,17 +202,21 @@ try {
         data = { customerCode: '0001', customerName: '検証用', currentBalance: 1000, activeToday: true }
       } else if (['getCustomer', 'getTodayHistory', 'getTodayActiveCustomers'].includes(action)) {
         return route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({
-          success: false, code: 'CUSTOMER_RECONCILIATION_REQUIRED', error: '確認待ちです。ホームで他のお客様を操作できます。' }) })
+          success: false, code: 'CUSTOMER_RECONCILIATION_REQUIRED', error: '確認用さんのうにょ状況に再確認が必要です, メリーに確認して...!' }) })
       } else throw new Error('Unexpected recovery request: ' + action)
       return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, data, sync }) })
     })
     await recovery.goto(base + '/#/customer/0425')
-    await recovery.getByText('確認待ちです。ホームで他のお客様を操作できます。', { exact: true }).waitFor()
+    await recovery.getByText('確認用さんのうにょ状況に再確認が必要です, メリーに確認して...!', { exact: true }).waitFor()
+    await recovery.getByRole('link', { name: '続いて操作する' }).waitFor()
     await recovery.evaluate(() => window.dispatchEvent(new Event('otomo-sync-retry')))
     await recovery.locator('.pending-customer-notice').waitFor()
     await recovery.evaluate(() => window.dispatchEvent(new Event('otomo-read-recovery-needed')))
     await recovery.clock.runFor(6000)
-    await recovery.getByRole('link', { name: 'ホームで他のお客様を操作' }).click()
+    await recovery.getByRole('heading', { name: '確認用さんのうにょ状況に再確認が必要です', exact: true }).waitFor()
+    await recovery.getByText('メリーに確認して...!', { exact: true }).waitFor()
+    await recovery.screenshot({ path: join(tmpdir(), `otomodachi-recovery-${name}.png`), fullPage: true })
+    await recovery.getByRole('link', { name: '続いて操作する' }).click()
     await recovery.getByRole('heading', { name: 'おともだちポーカー' }).waitFor()
     await recovery.clock.runFor(31000)
     await recovery.locator('.pending-customer-notice').waitFor()

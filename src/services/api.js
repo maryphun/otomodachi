@@ -51,7 +51,8 @@ function observeSync(sync) {
 export async function checkServerChanges(onWaiting) {
   const status = await apiGet('getSyncStatus', {}, false, onWaiting)
   window.dispatchEvent?.(new CustomEvent('otomo-pending-customers', {
-    detail: { codes: Array.isArray(status?.pendingCustomerCodes) ? status.pendingCustomerCodes : [] },
+    detail: { codes: Array.isArray(status?.pendingCustomerCodes) ? status.pendingCustomerCodes : [],
+      customers: Array.isArray(status?.pendingCustomers) ? status.pendingCustomers : [] },
   }))
   return serverChanged
 }

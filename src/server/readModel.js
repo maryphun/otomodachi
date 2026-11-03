@@ -1,3 +1,5 @@
+import { displayCustomerName } from '../utils/customerNames.js'
+
 const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024
 const MAX_BLOB_BYTES = 1500 * 1024
 const MAX_AGE_MS = 10 * 60 * 1000
@@ -191,8 +193,9 @@ function assertReadable(row) {
   }
 }
 
-function reconciliationRequired() {
-  const error = new Error('このお客様の前回の操作結果を確認できません。再入力せず、メリーに確認してください。他のお客様はホームから操作できます。')
+function reconciliationRequired(name) {
+  const subject = name ? `${displayCustomerName(name)}さん` : 'このお客様'
+  const error = new Error(`${subject}のうにょ状況に再確認が必要です, メリーに確認して...!`)
   error.code = 'CUSTOMER_RECONCILIATION_REQUIRED'
   error.status = 409
   return error
@@ -210,11 +213,17 @@ function pendingCustomers(row) {
 }
 
 export async function readModelStatus(env) {
-  const row = await database(env).prepare(`SELECT s.*, ${pendingSelection}
-    FROM read_model_state s WHERE s.id = 1`).first()
+  const row = await database(env).prepare(`SELECT s.*, ${pendingSelection}, b.payload
+    FROM read_model_state s LEFT JOIN read_model_blobs b
+      ON b.digest = json_extract(s.manifest, '$.customers')
+      AND EXISTS (SELECT 1 FROM read_model_pending_writes)
+    WHERE s.id = 1`).first()
   assertReadable(row)
   const pendingCustomerCodes = pendingCustomers(row)
-  return { ...await syncFrom(row), pendingCustomerCodes }
+  const customers = row.payload ? JSON.parse(row.payload).customers || [] : []
+  const pendingIdentities = pendingCustomerCodes.map(customerCode => ({ customerCode,
+    customerName: customers.find(customer => customer.customerCode === customerCode)?.customerName || '' }))
+  return { ...await syncFrom(row), pendingCustomerCodes, pendingCustomers: pendingIdentities }
 }
 
 export async function readResource(env, key) {
@@ -226,14 +235,14 @@ export async function readResource(env, key) {
     .bind(`$."${bucket}"`).first()
   assertReadable(row)
   const pending = new Set(pendingCustomers(row))
-  if (pending.has(key.split(':')[1])) throw reconciliationRequired()
+  const payload = row.payload && JSON.parse(row.payload)[key]
+  if (pending.has(key.split(':')[1])) throw reconciliationRequired(payload?.customerName)
   // Totals and attendance must never silently omit an unresolved customer's activity.
   if (pending.size && ['todayHistory', 'activeCustomers'].includes(key)) {
     const error = reconciliationRequired()
     error.message = '確認待ちのお客様がいるため、この一覧は表示できません。ホームの検索から他のお客様を操作できます。'
     throw error
   }
-  const payload = row.payload && JSON.parse(row.payload)[key]
   if (payload === undefined || payload === null) throw unavailable('おともだちの同期済みデータが見つかりません。')
   if (payload.readModelError) {
     const error = unavailable('なんかおかしい...メリーに確認して')

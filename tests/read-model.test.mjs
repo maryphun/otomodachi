@@ -153,7 +153,7 @@ test('unknown writes remain blocked until a matching durable Sheets receipt prov
 test('one unresolved checkout cannot lock unrelated customers, but its balance and aggregate totals stay protected', async () => {
   const s = setup()
   const data = snapshot()
-  const blocked = { customerCode: '0425', customerName: 'Review', currentBalance: 117100,
+  const blocked = { customerCode: '0425', customerName: 'Michiさん', currentBalance: 117100,
     activeToday: true, lastVisit: '2026/11/02' }
   data.resources[0].payload.push(blocked)
   data.resources.push({ key: 'customer:0425', payload: blocked }, { key: 'history:0425', payload: [] })
@@ -163,6 +163,10 @@ test('one unresolved checkout cannot lock unrelated customers, but its balance a
   await model.publishReadModel(s.env, data, 1)
   const status = await model.readModelStatus(s.env)
   assert.deepEqual(status.pendingCustomerCodes, ['0425'])
+  assert.deepEqual(status.pendingCustomers, [{ customerCode: '0425', customerName: 'Michiさん' }])
+  await assert.rejects(model.readResource(s.env, 'customer:0425'), {
+    message: 'Michiさんのうにょ状況に再確認が必要です, メリーに確認して...!',
+  })
   const list = await model.readResource(s.env, 'customers')
   assert.equal(list.data.length, 2)
   assert.equal(list.data[1].currentBalance, null)
@@ -174,6 +178,7 @@ test('one unresolved checkout cannot lock unrelated customers, but its balance a
   }
   assert.equal(JSON.stringify(list.sync).includes('0425'), false, 'Public sync metadata must not expose other customer IDs')
   assert.equal(JSON.stringify(list.sync).includes(id), false, 'Public sync metadata must not expose request IDs')
+  assert.equal(JSON.stringify(list.sync).includes('Michi'), false, 'Public sync metadata must not expose customer names')
   const before = s.sql.prepare('SELECT * FROM read_model_pending_writes').all()
   await assert.rejects(model.beginReadModelWrite(s.env, { requestId: 'another-request-0425',
     action: 'enterCustomer', customerCode: '425' }), { code: 'CUSTOMER_RECONCILIATION_REQUIRED' })

@@ -1,13 +1,28 @@
 <script setup>
-import { RouterView } from 'vue-router'
-import { onMounted, onBeforeUnmount, ref } from 'vue'
+import { RouterView, useRoute } from 'vue-router'
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { displayCustomerName } from './utils/customerNames'
 
 const syncUnavailable = ref(false)
 const syncRecovering = ref(false)
 const unresolvedSave = ref(false)
 const syncProblem = ref('')
 const pendingCustomerCodes = ref([])
-function updatePendingCustomers(event) { pendingCustomerCodes.value = event.detail?.codes || [] }
+const pendingCustomers = ref([])
+const route = useRoute()
+function updatePendingCustomers(event) {
+  pendingCustomerCodes.value = event.detail?.codes || []
+  pendingCustomers.value = event.detail?.customers || []
+}
+function reviewSubject(code) {
+  const name = pendingCustomers.value.find(customer => customer.customerCode === code)?.customerName
+  return name ? `${displayCustomerName(name)}さん` : code ? `おともだち ${code}` : 'このお客様'
+}
+const reviewHeading = computed(() => {
+  const code = /^\/customer\/(\d{1,4})(?:\/|$)/.exec(route.path)?.[1]?.padStart(4, '0')
+  const subjects = code ? reviewSubject(code) : pendingCustomerCodes.value.map(reviewSubject).join('、') || 'このお客様'
+  return `${subjects}のうにょ状況に再確認が必要です`
+})
 function hideUnverifiedData(event) {
   syncUnavailable.value = true
   syncRecovering.value = Boolean(event.detail?.recovering)
@@ -41,16 +56,20 @@ function resetPageScroll() {
   <div class="app-shell">
     <section v-if="syncUnavailable" class="sync-unavailable" role="status" aria-live="polite" :aria-busy="syncRecovering">
       <template v-if="unresolvedSave">
-        <h1>操作結果の確認が必要です</h1>
-        <p>前回の保存結果を確認できません。操作を繰り返さず、スタッフに記録の確認をお願いしてください。</p>
-        <button type="button" @click="reloadPage">再読み込み</button>
-        <a class="recovery-home" href="/">ホームで他のお客様を操作</a>
+        <h1>{{ reviewHeading }}</h1>
+        <p>メリーに確認して...!</p>
+        <div class="recovery-actions">
+          <button type="button" @click="reloadPage">再読み込み</button>
+          <a class="recovery-home" href="/">続いて操作する</a>
+        </div>
       </template>
       <template v-else-if="syncProblem">
-        <h1>記録を確認してください</h1>
-        <p>{{ syncProblem }}</p>
-        <button type="button" @click="retrySync">もう一度確認</button>
-        <a class="recovery-home" href="/">ホームで他のお客様を操作</a>
+        <h1>{{ pendingCustomerCodes.length ? reviewHeading : '記録を確認してください' }}</h1>
+        <p>{{ pendingCustomerCodes.length ? 'メリーに確認して...!' : syncProblem }}</p>
+        <div class="recovery-actions">
+          <button type="button" @click="reloadPage">再読み込み</button>
+          <a class="recovery-home" href="/">続いて操作する</a>
+        </div>
       </template>
       <template v-else>
         <span v-if="syncRecovering" class="sync-spinner" aria-hidden="true"></span>
@@ -61,7 +80,7 @@ function resetPageScroll() {
     </section>
     <div :inert="syncUnavailable" :hidden="syncUnavailable">
     <p v-if="pendingCustomerCodes.length" class="pending-customer-notice" role="status">
-      確認待ち：{{ pendingCustomerCodes.join('、') }}。該当のお客様は再入力せず、メリーに確認してください。他のお客様は検索から操作できます。
+      {{ pendingCustomerCodes.map(reviewSubject).join('、') }}のうにょ状況に再確認が必要です, メリーに確認して...!
     </p>
     <RouterView v-slot="{ Component, route }">
       <Transition
@@ -88,7 +107,7 @@ function resetPageScroll() {
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
-.recovery-home { display: block; margin-top: 24px; color: #193b56; text-decoration: underline; }
+.recovery-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
 .sync-unavailable {
   max-width: 540px;
   margin: 0 auto;
@@ -110,7 +129,7 @@ function resetPageScroll() {
 @keyframes sync-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .sync-spinner { animation: none; } }
 .sync-unavailable p { font-size: 16px; line-height: 1.6; }
-.sync-unavailable button {
+.sync-unavailable button, .sync-unavailable .recovery-home {
   margin-top: 16px;
   padding: 14px 24px;
   border: 0;
@@ -118,9 +137,12 @@ function resetPageScroll() {
   color: white;
   background: #193b56;
   cursor: pointer;
+  text-align: center;
+  text-decoration: none;
 }
-.sync-unavailable button:hover { background: #245273; }
-.sync-unavailable button:focus-visible { outline: 3px solid #d61c84; outline-offset: 3px; }
+.recovery-actions button, .recovery-actions .recovery-home { margin-top: 0; }
+.sync-unavailable button:hover, .sync-unavailable .recovery-home:hover { background: #245273; }
+.sync-unavailable button:focus-visible, .sync-unavailable .recovery-home:focus-visible { outline: 3px solid #d61c84; outline-offset: 3px; }
 .app-shell {
   position: relative;
   min-height: 100dvh;

@@ -1302,6 +1302,7 @@ onBeforeUnmount(() => {
       >
         再読み込み
       </button>
+      <a class="customer-recovery-home" href="/">続いて操作する</a>
     </section>
 
     <template v-else-if="customer">
@@ -3059,7 +3060,10 @@ h1 {
   margin: 0 0 14px;
 }
 
-.error-card button {
+.error-card button, .customer-recovery-home {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 42px;
   padding: 8px 14px;
 
@@ -3069,7 +3073,11 @@ h1 {
   border-radius: 11px;
 
   font-weight: 750;
+  text-decoration: none;
 }
+
+.customer-recovery-home { margin: 8px 0 0 12px; }
+.customer-recovery-home:focus-visible { outline: 3px solid #193b56; outline-offset: 3px; }
 
 .state-message {
   padding: 28px 14px;
