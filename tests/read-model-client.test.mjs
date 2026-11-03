@@ -31,6 +31,15 @@ function response(data, sourceUpdatedAt = '2026-10-23T00:00:00.000Z') {
   return Response.json({ success: true, data, sync: { sourceUpdatedAt, businessDate: '2026-10-23' } })
 }
 
+test('daily list views receive review metadata while prefetch keeps the array contract', async () => {
+  const excludedCustomers = [{ customerCode: '0425', customerName: 'Michiさん' }]
+  const c = setup(async () => Response.json({ success: true, data: [customer], excludedCustomers }))
+  for (const method of ['getTodayHistory', 'getTodayActiveCustomers']) {
+    assert.deepEqual(JSON.parse(JSON.stringify(await c[method]())), [customer])
+    assert.deepEqual(JSON.parse(JSON.stringify(await c[method](true))), { data: [customer], excludedCustomers })
+  }
+})
+
 test('legacy cache purge removes financial copies but preserves pending receipt and preferences', () => {
   const c = setup(() => assert.fail('No network needed'))
   for (const name of ['sessionStorage', 'localStorage']) {

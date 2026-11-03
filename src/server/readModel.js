@@ -228,26 +228,35 @@ export async function readModelStatus(env) {
 
 export async function readResource(env, key) {
   const bucket = bucketFor(key)
+  const isDailyList = ['todayHistory', 'activeCustomers'].includes(key)
   // State, pending-write guard, and data are read in the same SQL statement.
-  const row = await database(env).prepare(`SELECT s.*, b.payload, ${pendingSelection}
+  const row = await database(env).prepare(`SELECT s.*, b.payload, c.payload AS customers_payload, ${pendingSelection}
     FROM read_model_state s LEFT JOIN read_model_blobs b
-      ON b.digest = json_extract(s.manifest, ?1) WHERE s.id = 1`)
-    .bind(`$."${bucket}"`).first()
+      ON b.digest = json_extract(s.manifest, ?1)
+    LEFT JOIN read_model_blobs c ON ?2 = 1 AND c.digest = json_extract(s.manifest, '$.customers')
+    WHERE s.id = 1`)
+    .bind(`$."${bucket}"`, isDailyList ? 1 : 0).first()
   assertReadable(row)
   const pending = new Set(pendingCustomers(row))
   const payload = row.payload && JSON.parse(row.payload)[key]
   if (pending.has(key.split(':')[1])) throw reconciliationRequired(payload?.customerName)
-  // Totals and attendance must never silently omit an unresolved customer's activity.
-  if (pending.size && ['todayHistory', 'activeCustomers'].includes(key)) {
-    const error = reconciliationRequired()
-    error.message = '確認待ちのお客様がいるため、この一覧は表示できません。ホームの検索から他のお客様を操作できます。'
-    throw error
-  }
   if (payload === undefined || payload === null) throw unavailable('おともだちの同期済みデータが見つかりません。')
   if (payload.readModelError) {
     const error = unavailable('なんかおかしい...メリーに確認して')
     error.code = payload.readModelError.code || error.code
     throw error
+  }
+  if (isDailyList && Array.isArray(payload)) {
+    const excluded = new Set(pending)
+    for (const item of payload) {
+      if (!/^\d{4}$/.test(item?.customerCode || '')) throw unavailable()
+      if (item.readModelError) excluded.add(item.customerCode)
+    }
+    const customers = row.customers_payload ? JSON.parse(row.customers_payload).customers || [] : []
+    const excludedCustomers = [...excluded].sort().map(customerCode => ({ customerCode,
+      customerName: customers.find(customer => customer.customerCode === customerCode)?.customerName || '' }))
+    return { success: true, data: payload.filter(item => !excluded.has(item.customerCode)),
+      excludedCustomers, sync: await syncFrom(row) }
   }
   if (key === 'customers' && Array.isArray(payload)) {
     const data = payload.map(customer => {

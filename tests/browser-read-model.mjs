@@ -200,7 +200,12 @@ try {
       ]
       else if (action === 'getCustomer' && url.searchParams.get('customerCode') === '0001') {
         data = { customerCode: '0001', customerName: '検証用', currentBalance: 1000, activeToday: true }
-      } else if (['getCustomer', 'getTodayHistory', 'getTodayActiveCustomers'].includes(action)) {
+      } else if (action === 'getTodayHistory' || action === 'getTodayActiveCustomers') {
+        return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, sync,
+          data: [{ customerCode: '0001', customerName: '検証用', chipChange: 100, movementCount: 1,
+            transactionId: 'verified-transaction', balanceBefore: 900, balanceAfter: 1000 }],
+          excludedCustomers: [{ customerCode: '0425', customerName: '確認用さん' }] }) })
+      } else if (action === 'getCustomer') {
         return route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({
           success: false, code: 'CUSTOMER_RECONCILIATION_REQUIRED', error: '確認用さんのうにょ状況に再確認が必要です, メリーに確認して...!' }) })
       } else throw new Error('Unexpected recovery request: ' + action)
@@ -231,6 +236,24 @@ try {
     await recovery.goto(base + '/#/customer/0001')
     await recovery.locator('.balance-panel strong').filter({ hasText: /^1,000$/ }).waitFor()
     await recovery.clock.runFor(31000)
+    assert.equal(await recovery.locator('.sync-unavailable').count(), 0)
+    assert.ok(await recovery.evaluate(() => sessionStorage.getItem('otomodachi-checkout-pending-0425')))
+    await recovery.goto(base + '/#/today-active-customers')
+    await recovery.locator('.customer-list .customer-card').filter({ hasText: '検証用' }).waitFor()
+    await recovery.locator('.customer-review-list').getByRole('button', { name: /確認用さん/ }).waitFor()
+    assert.equal(await recovery.locator('.summary-card strong').innerText(), '1名')
+    await recovery.clock.runFor(600)
+    await recovery.screenshot({ path: join(tmpdir(), `otomodachi-active-isolated-${name}.png`), fullPage: true, animations: 'disabled' })
+    await recovery.locator('.customer-list .customer-card').click()
+    await recovery.locator('.balance-panel strong').filter({ hasText: /^1,000$/ }).waitFor()
+    await recovery.goto(base + '/#/today-history')
+    await recovery.locator('.transaction-list .transaction-card').filter({ hasText: '検証用' }).waitFor()
+    await recovery.locator('.history-review-notice').filter({ hasText: '確認用さん' }).waitFor()
+    await recovery.getByText('確認済み分の合計増減', { exact: true }).waitFor()
+    assert.equal(await recovery.locator('.summary-card--wide strong').innerText(), '+100')
+    assert.equal(await recovery.locator('.transaction-count').innerText(), '1件')
+    await recovery.clock.runFor(600)
+    await recovery.screenshot({ path: join(tmpdir(), `otomodachi-history-isolated-${name}.png`), fullPage: true, animations: 'disabled' })
     assert.equal(await recovery.locator('.sync-unavailable').count(), 0)
     assert.ok(await recovery.evaluate(() => sessionStorage.getItem('otomodachi-checkout-pending-0425')))
     assert.equal(await recovery.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)

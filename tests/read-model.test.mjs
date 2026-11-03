@@ -150,13 +150,17 @@ test('unknown writes remain blocked until a matching durable Sheets receipt prov
   assert.equal((await model.readResource(s.env, 'customer:0001')).data.currentBalance, 2000)
 })
 
-test('one unresolved checkout cannot lock unrelated customers, but its balance and aggregate totals stay protected', async () => {
+test('one unresolved checkout protects only that customer and excludes it explicitly from daily lists', async () => {
   const s = setup()
   const data = snapshot()
   const blocked = { customerCode: '0425', customerName: 'Michiさん', currentBalance: 117100,
     activeToday: true, lastVisit: '2026/11/02' }
   data.resources[0].payload.push(blocked)
   data.resources.push({ key: 'customer:0425', payload: blocked }, { key: 'history:0425', payload: [] })
+  data.resources.find(resource => resource.key === 'activeCustomers').payload.push(blocked)
+  data.resources.find(resource => resource.key === 'todayHistory').payload.push(
+    { customerCode: '0001', chipChange: 100, transactionId: 'valid' },
+    { customerCode: '0425', chipChange: 58700, transactionId: 'unconfirmed' })
   const id = 'unresolved-checkout-0425'
   await model.beginReadModelWrite(s.env, { requestId: id, action: 'checkoutCustomer', customerCode: '0425' })
   await assert.rejects(model.readModelStatus(s.env), { code: 'READ_MODEL_UNAVAILABLE' })
@@ -173,8 +177,14 @@ test('one unresolved checkout cannot lock unrelated customers, but its balance a
   assert.equal(list.data[1].needsReconciliation, true)
   assert.equal('activeToday' in list.data[1], false)
   assert.equal((await model.readResource(s.env, 'customer:0001')).data.currentBalance, 1000)
-  for (const key of ['customer:0425', 'history:0425', 'todayHistory', 'activeCustomers']) {
+  for (const key of ['customer:0425', 'history:0425']) {
     await assert.rejects(model.readResource(s.env, key), { code: 'CUSTOMER_RECONCILIATION_REQUIRED' })
+  }
+  for (const key of ['todayHistory', 'activeCustomers']) {
+    const result = await model.readResource(s.env, key)
+    assert.deepEqual(result.data.map(item => item.customerCode), ['0001'])
+    assert.deepEqual(result.excludedCustomers, [{ customerCode: '0425', customerName: 'Michiさん' }])
+    assert.equal(JSON.stringify(result).includes('58700'), false)
   }
   assert.equal(JSON.stringify(list.sync).includes('0425'), false, 'Public sync metadata must not expose other customer IDs')
   assert.equal(JSON.stringify(list.sync).includes(id), false, 'Public sync metadata must not expose request IDs')
@@ -192,6 +202,22 @@ test('one unresolved checkout cannot lock unrelated customers, but its balance a
   s.sql.prepare('UPDATE read_model_pending_writes SET request_id = ?').run('different-unresolved-request')
   assert.notEqual((await model.readModelStatus(s.env)).pendingRevision, status.pendingRevision,
     'Public pending revision must include request entropy, not a guessable customer-code hash')
+})
+
+test('daily lists isolate invalid customer rows and still disclose absent pending customers', async () => {
+  const s = setup()
+  const data = snapshot()
+  data.resources.find(resource => resource.key === 'todayHistory').payload = [
+    { customerCode: '0001', chipChange: 100 },
+    { customerCode: '0001', readModelError: { code: 'RECORD_VERIFICATION_REQUIRED' } },
+    { customerCode: '0002', chipChange: 200 },
+  ]
+  await model.beginReadModelWrite(s.env, { requestId: 'absent-pending-0425', action: 'checkoutCustomer', customerCode: '0425' })
+  await model.publishReadModel(s.env, data, 1)
+  const result = await model.readResource(s.env, 'todayHistory')
+  assert.deepEqual(result.data, [{ customerCode: '0002', chipChange: 200 }])
+  assert.deepEqual(result.excludedCustomers.map(item => item.customerCode), ['0001', '0425'])
+  assert.equal((await model.readResource(s.env, 'activeCustomers')).data.length, 1)
 })
 
 test('unknown registrations and stale or dirty snapshots retain global read protection', async () => {

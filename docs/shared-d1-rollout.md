@@ -12,8 +12,11 @@ After a fresh, clean snapshot is published, an unresolved operation for a known
 customer blocks that customer's detail, history and new operations, rather than
 blocking the entire app. Search lists retain their identity with a `要確認` label
 and no balance, attendance or visit data. Other verified customers remain usable.
-Today's aggregate history and attendance lists remain unavailable while a pending
-customer could affect their totals. Unknown-customer registrations, dirty snapshots,
+Today's history and attendance lists exclude only affected customers and return
+explicit identity-only review metadata. Other customers remain visible and usable;
+counts and totals are labeled as excluding customers requiring review. Attendance
+shows review identities separately, without claiming they are currently in the shop.
+Unknown-customer registrations, dirty snapshots,
 expired snapshots and incorrect business dates still block shared reads.
 
 Browser recovery preserves unresolved receipt IDs and provides a link back to the

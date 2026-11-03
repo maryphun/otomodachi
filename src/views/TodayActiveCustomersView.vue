@@ -13,6 +13,7 @@ import {
 const router = useRouter()
 
 const customers = ref([])
+const excludedCustomers = ref([])
 const isLoading = ref(true)
 const isRefreshing = ref(false)
 const errorMessage = ref('')
@@ -69,6 +70,7 @@ async function loadCustomers(
 ) {
   const sequence = ++loadSequence
   customers.value = []
+  excludedCustomers.value = []
   lastUpdated.value = ''
   if (showMainLoading) {
     isLoading.value = true
@@ -79,12 +81,11 @@ async function loadCustomers(
   errorMessage.value = ''
 
   try {
-    const result = await getTodayActiveCustomers()
+    const result = await getTodayActiveCustomers(true)
     if (sequence !== loadSequence) return
 
-    customers.value = Array.isArray(result)
-      ? result
-      : []
+    customers.value = result.data
+    excludedCustomers.value = result.excludedCustomers
     lastUpdated.value = new Date().toISOString()
   } catch (error) {
     if (sequence !== loadSequence) return
@@ -146,7 +147,7 @@ onMounted(() => {
       <span class="summary-icon">店</span>
 
       <div>
-        <small>ただいまおともだち数</small>
+        <small>{{ excludedCustomers.length ? '来店確認済み（要確認のお客様を除く）' : 'ただいまおともだち数' }}</small>
         <strong>{{ customers.length }}名</strong>
       </div>
 
@@ -211,8 +212,8 @@ onMounted(() => {
         class="empty-card"
       >
         <span class="empty-icon">店</span>
-        <h2>だれもいません...　ぴえん</h2>
-        <p>
+        <h2>{{ excludedCustomers.length ? '来店確認済みのお客様はいません' : 'だれもいません...　ぴえん' }}</h2>
+        <p v-if="!excludedCustomers.length">
           人類滅亡！！！
         </p>
       </div>
@@ -267,11 +268,24 @@ onMounted(() => {
           </em>
         </button>
       </TransitionGroup>
+      <section v-if="excludedCustomers.length && !isLoading && !isRefreshing && !errorMessage" class="customer-review-list" aria-label="要確認のお客様">
+        <h2>要確認</h2>
+        <button v-for="customer in excludedCustomers" :key="customer.customerCode" type="button"
+          @click="openCustomer(customer.customerCode)">
+          {{ customer.customerName ? `${displayCustomerName(customer.customerName)}さん` : customer.customerCode }}
+          <span>うにょ・来店状況を確認中</span>
+        </button>
+      </section>
     </section>
   </main>
 </template>
 
 <style scoped>
+.customer-review-list { margin-top: 24px; }
+.customer-review-list h2 { font-size: 18px; }
+.customer-review-list button { display: block; width: 100%; padding: 14px; margin-top: 8px; text-align: left; color: #713f12; background: #fff3e5; border: 1px solid #e3c6a1; border-radius: 8px; overflow-wrap: anywhere; }
+.customer-review-list span { display: block; margin-top: 4px; font-size: 14px; }
+.customer-review-list button:focus-visible { outline: 3px solid #193b56; outline-offset: 3px; }
 .active-page {
   position: relative;
 

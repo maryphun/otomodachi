@@ -439,10 +439,14 @@ export function updateCustomerProfilePublic(customerCode, profilePublic) {
   return apiGet('updateCustomerProfilePublic', { customerCode, profilePublic })
 }
 
-export async function getTodayHistory() {
-  return requireList(await apiGet('getTodayHistory'))
+export async function getTodayHistory(includeReview = false) {
+  const result = await apiGet('getTodayHistory', {}, true)
+  const data = requireList(result.data)
+  return includeReview ? { data, excludedCustomers: result.excludedCustomers || [] } : data
 }
 
-export async function getTodayActiveCustomers() {
-  return requireList(await apiGet('getTodayActiveCustomers'))
+export async function getTodayActiveCustomers(includeReview = false) {
+  const result = await apiGet('getTodayActiveCustomers', {}, true)
+  const data = requireList(result.data)
+  return includeReview ? { data, excludedCustomers: result.excludedCustomers || [] } : data
 }

@@ -17,6 +17,7 @@ import {
 const router = useRouter()
 
 const transactions = ref([])
+const excludedCustomers = ref([])
 const isLoading = ref(true)
 const isRefreshing = ref(false)
 const errorMessage = ref('')
@@ -133,6 +134,7 @@ function formatLastUpdated(value) {
 async function loadHistory(showMainLoading = true) {
   const sequence = ++loadSequence
   transactions.value = []
+  excludedCustomers.value = []
   lastUpdated.value = ''
   if (showMainLoading) {
     isLoading.value = true
@@ -142,9 +144,10 @@ async function loadHistory(showMainLoading = true) {
   errorMessage.value = ''
 
   try {
-    const result = await getTodayHistory()
+    const result = await getTodayHistory(true)
     if (sequence !== loadSequence) return
-    transactions.value = result
+    transactions.value = result.data
+    excludedCustomers.value = result.excludedCustomers
     lastUpdated.value = new Date().toISOString()
   } catch (error) {
     if (sequence !== loadSequence) return
@@ -195,6 +198,11 @@ onMounted(() => { loadHistory() })
       </button>
     </header>
 
+    <p v-if="excludedCustomers.length && !isLoading && !isRefreshing && !errorMessage" class="history-review-notice" role="status">
+      確認待ち：{{ excludedCustomers.map(customer => customer.customerName ? `${displayCustomerName(customer.customerName)}さん` : customer.customerCode).join('、') }}。
+      以下の履歴・件数・合計には含まれていません。
+    </p>
+
     <section v-if="!isLoading && !isRefreshing && !errorMessage" class="summary-grid">
       <article class="summary-card">
         <span class="summary-icon summary-icon--deposit">
@@ -232,7 +240,7 @@ onMounted(() => { loadHistory() })
         </span>
 
         <div>
-          <small>本日の合計増減</small>
+          <small>{{ excludedCustomers.length ? '確認済み分の合計増減' : '本日の合計増減' }}</small>
 
           <strong
             :class="{
@@ -321,7 +329,7 @@ onMounted(() => { loadHistory() })
         </span>
 
         <h2>
-          本日の履歴はありません
+          {{ excludedCustomers.length ? '表示できる確認済みの履歴はありません' : '本日の履歴はありません' }}
         </h2>
 
         <p>
@@ -413,6 +421,7 @@ onMounted(() => { loadHistory() })
 </template>
 
 <style scoped>
+.history-review-notice { padding: 14px; color: #713f12; background: #fff3e5; line-height: 1.6; overflow-wrap: anywhere; }
 .today-history-page {
   width: min(100%, 860px);
   min-height: 100vh;
