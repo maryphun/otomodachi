@@ -2,6 +2,7 @@ import {
   readModelEnabled, readResource, readModelStatus, currentEpoch,
   invalidateReadModel, publishReadModel, beginReadModelWrite,
   finishReadModelWrite, pruneReadModel, unavailable,
+  claimRegistration, recordRegistrationSaved, releaseUnsentRegistration,
 } from './server/readModel.js'
 
 const SESSION_COOKIE_NAME = 'otomo_session'
@@ -1522,11 +1523,13 @@ async function saveAndSynchronize_(requestUrl, env) {
   if (parameters.clientVersion !== 'd1-v1') {
     return { success: false, code: 'CLIENT_UPDATE_REQUIRED', error: 'ページを再読み込みしてから操作してください。' }
   }
+  if (parameters.action === 'createCustomer') return registerAndSynchronize_(parameters, env)
   const id = await beginReadModelWrite(env, parameters)
   const result = await fetchAppsScriptJson_(parameters, env)
   if (!result.success) {
     // A transport failure may conceal a completed Sheets write. Keep the barrier.
-    if (['CHECKOUT_NOT_ACTIVE', 'BALANCE_CHANGED', 'CLIENT_UPDATE_REQUIRED'].includes(result.code)) {
+    if (['CHECKOUT_NOT_ACTIVE', 'BALANCE_CHANGED', 'CLIENT_UPDATE_REQUIRED',
+      'CHIP_INPUT_INVALID', 'CHIP_INSUFFICIENT_BALANCE'].includes(result.code)) {
       await finishReadModelWrite(env, id)
       try { await synchronizeReadModel_(env) } catch { /* Scheduled reconciliation will retry reads only. */ }
     }
@@ -1541,6 +1544,32 @@ async function saveAndSynchronize_(requestUrl, env) {
     // Return the original confirmed receipt, never turn a sync error into a new chip operation.
     return { ...result, data: { ...result.data, attendanceSyncPending: true, readModelSyncPending: true } }
   }
+}
+
+async function registerAndSynchronize_(parameters, env) {
+  const claim = await claimRegistration(env, parameters)
+  let code = claim.customerCode
+  if (!claim.replayed) {
+    try {
+      await beginReadModelWrite(env, parameters)
+    } catch (error) {
+      // Apps Script has not been called: releasing this claim cannot replay a save.
+      await releaseUnsentRegistration(env, parameters.requestId)
+      throw error
+    }
+    const result = await fetchAppsScriptJson_(parameters, env)
+    if (!result.success) return { success: false, code: 'REGISTRATION_RECONCILIATION_REQUIRED',
+      error: '新規登録の結果を確認できません。再登録せず、メリーに確認して...!' }
+    code = normalizePublicCustomerCode_(result.data?.customerCode)
+    if (!code || !Number.isSafeInteger(result.data?.currentBalance)) throw unavailable('新規登録の結果を確認できません。')
+    // Preserve the assigned identity before syncing so lost responses never create another row.
+    await recordRegistrationSaved(env, parameters.requestId, code)
+  }
+  await invalidateReadModel(env)
+  await finishReadModelWrite(env, parameters.requestId)
+  await synchronizeReadModel_(env)
+  const verified = await readResource(env, `customer:${code}`)
+  return { ...verified, data: { ...verified.data, replayed: claim.replayed } }
 }
 
 async function handleReadModelSync_(request, env) {

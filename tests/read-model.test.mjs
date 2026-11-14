@@ -8,6 +8,7 @@ import * as model from '../src/server/readModel.js'
 function setup() {
   const sql = new DatabaseSync(':memory:')
   sql.exec(readFileSync(new URL('../migrations-attendance/0002_shared_read_model.sql', import.meta.url), 'utf8'))
+  sql.exec(readFileSync(new URL('../migrations-attendance/0003_registration_requests.sql', import.meta.url), 'utf8'))
   const db = {
     hook: null,
     prepare(text) {
@@ -240,6 +241,120 @@ test('same-customer concurrent requests cannot both reserve new chip writes', as
   assert.equal(results.filter(result => result.status === 'fulfilled').length, 1)
   assert.equal(results.find(result => result.status === 'rejected').reason.code, 'CUSTOMER_RECONCILIATION_REQUIRED')
   assert.equal(s.sql.prepare('SELECT COUNT(*) AS n FROM read_model_pending_writes').get().n, 1)
+})
+
+function registrationWorker() {
+  const source = readFileSync(new URL('../src/worker.js', import.meta.url), 'utf8')
+    .replace(/import\s*\{[\s\S]*?\}\s*from '\.\/server\/readModel.js'/, '')
+    .replace('export default {', 'const worker = {')
+  const context = vm.createContext({ ...model, URL, Response, TextEncoder, console, crypto })
+  vm.runInContext(source, context)
+  return context
+}
+
+test('only explicit pre-save rejections release the chip operation barrier', async () => {
+  for (const code of ['CHIP_INPUT_INVALID', 'CHIP_INSUFFICIENT_BALANCE', 'BALANCE_CHANGED',
+    'CHECKOUT_NOT_ACTIVE', 'RECORD_VERIFICATION_REQUIRED', '', 'UNRECOGNIZED_ERROR']) {
+    const s = setup()
+    const c = registrationWorker()
+    const calls = []
+    c.fetchAppsScriptJson_ = async parameters => {
+      calls.push(parameters.action)
+      return { success: false, code, error: 'Rejected or unknown' }
+    }
+    const result = await c.saveAndSynchronize_(new URL('https://example.invalid/api?action=addTransaction&customerCode=0001&clientVersion=d1-v1&requestId=reject-request-0001'), s.env)
+    assert.equal(result.code, code)
+    const clear = ['CHIP_INPUT_INVALID', 'CHIP_INSUFFICIENT_BALANCE', 'BALANCE_CHANGED', 'CHECKOUT_NOT_ACTIVE'].includes(code)
+    assert.equal(s.sql.prepare('SELECT COUNT(*) AS n FROM read_model_pending_writes').get().n, clear ? 0 : 1)
+    assert.equal(calls.filter(action => action === 'addTransaction').length, 1)
+  }
+})
+
+function registrationUrl(id = 'registration-request-0001', name = 'New') {
+  return new URL(`https://example.invalid/api?action=createCustomer&clientVersion=d1-v1&requestId=${id}&customerName=${name}&initialBalance=0`)
+}
+
+test('registration works beside 0425 and replays only the confirmed read, never creation', async () => {
+  const s = setup()
+  await model.beginReadModelWrite(s.env, { requestId: 'pending-checkout-0425', action: 'checkoutCustomer', customerCode: '0425' })
+  await model.publishReadModel(s.env, snapshot(), 1)
+  const c = registrationWorker()
+  const calls = []
+  c.fetchAppsScriptJson_ = async parameters => {
+    calls.push(parameters.action)
+    return parameters.action === 'createCustomer' ? { success: true, data: { customerCode: '0001', currentBalance: 1000 } }
+      : { success: true, data: snapshot() }
+  }
+  for (let i = 0; i < 2; i++) {
+    const result = await c.saveAndSynchronize_(registrationUrl(), s.env)
+    assert.equal(result.success, true)
+    assert.equal(result.data.customerCode, '0001')
+    assert.equal(result.data.currentBalance, 1000)
+    assert.equal(result.data.replayed, Boolean(i))
+  }
+  assert.equal(calls.filter(action => action === 'createCustomer').length, 1)
+  assert.equal(s.sql.prepare('SELECT customer_code FROM read_model_pending_writes').get().customer_code, '0425')
+  assert.equal(s.sql.prepare('SELECT status FROM registration_requests').get().status, 'saved')
+  await assert.rejects(c.saveAndSynchronize_(registrationUrl(undefined, 'Different'), s.env), { code: 'REGISTRATION_RECONCILIATION_REQUIRED' })
+})
+
+test('unknown registration responses block replays and distinct registration IDs without calling Sheets again', async () => {
+  const s = setup()
+  const c = registrationWorker()
+  let writes = 0
+  c.fetchAppsScriptJson_ = async () => { writes++; return { success: false, error: 'transport failed' } }
+  assert.equal((await c.saveAndSynchronize_(registrationUrl(), s.env)).code, 'REGISTRATION_RECONCILIATION_REQUIRED')
+  await assert.rejects(c.saveAndSynchronize_(registrationUrl(), s.env), { code: 'REGISTRATION_RECONCILIATION_REQUIRED' })
+  await assert.rejects(c.saveAndSynchronize_(registrationUrl('other-registration-request'), s.env), { code: 'REGISTRATION_RECONCILIATION_REQUIRED' })
+  assert.equal(writes, 1)
+  assert.equal(s.sql.prepare('SELECT COUNT(*) AS n FROM registration_requests').get().n, 1)
+})
+
+test('simultaneous registration claims allow exactly one dispatch', async () => {
+  const s = setup()
+  const parameters = { requestId: 'concurrent-registration-id', customerName: 'New', initialBalance: 0 }
+  const results = await Promise.allSettled([model.claimRegistration(s.env, parameters), model.claimRegistration(s.env, parameters)])
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1)
+  assert.equal(results.find(result => result.status === 'rejected').reason.code, 'REGISTRATION_RECONCILIATION_REQUIRED')
+})
+
+test('registration confirmed before a sync failure can be recovered without another Sheets creation', async () => {
+  const s = setup()
+  const c = registrationWorker()
+  let writes = 0
+  let failSync = true
+  c.fetchAppsScriptJson_ = async parameters => {
+    if (parameters.action === 'createCustomer') { writes++; return { success: true, data: { customerCode: '0001', currentBalance: 1000 } } }
+    return failSync ? { success: false } : { success: true, data: snapshot() }
+  }
+  await assert.rejects(c.saveAndSynchronize_(registrationUrl(), s.env))
+  failSync = false
+  assert.equal((await c.saveAndSynchronize_(registrationUrl(), s.env)).data.currentBalance, 1000)
+  assert.equal(writes, 1)
+})
+
+test('legacy or invalid registrations do not reserve or call Sheets', async () => {
+  const s = setup()
+  const c = registrationWorker()
+  c.fetchAppsScriptJson_ = () => assert.fail('Must not dispatch')
+  const url = registrationUrl()
+  url.searchParams.delete('requestId')
+  await assert.rejects(c.saveAndSynchronize_(url, s.env), { code: 'CLIENT_UPDATE_REQUIRED' })
+  url.searchParams.set('requestId', 'invalid-input-request')
+  url.searchParams.set('initialBalance', '-1')
+  await assert.rejects(c.saveAndSynchronize_(url, s.env), { code: 'REGISTRATION_INPUT_INVALID' })
+  assert.equal(s.sql.prepare('SELECT COUNT(*) AS n FROM registration_requests').get().n, 0)
+})
+
+test('a registration cannot remove a different operation when request IDs collide', async () => {
+  const s = setup()
+  const id = 'registration-request-0001'
+  await model.beginReadModelWrite(s.env, { requestId: id, action: 'checkoutCustomer', customerCode: '0425' })
+  const c = registrationWorker()
+  c.fetchAppsScriptJson_ = () => assert.fail('Must not dispatch')
+  await assert.rejects(c.saveAndSynchronize_(registrationUrl(id), s.env))
+  assert.equal(s.sql.prepare('SELECT action FROM read_model_pending_writes').get().action, 'checkoutCustomer')
+  assert.equal(s.sql.prepare('SELECT COUNT(*) AS n FROM registration_requests').get().n, 0)
 })
 
 test('stale, wrong-day, incomplete and unverified snapshots never become trusted balances', async () => {

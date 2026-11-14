@@ -26,6 +26,20 @@ function setup(fetch, fastRetries = false) {
   return c
 }
 
+test('explicit chip rejections clear the browser request so corrected input gets a fresh ID', async () => {
+  for (const code of ['CHIP_INPUT_INVALID', 'CHIP_INSUFFICIENT_BALANCE']) {
+    const ids = []
+    const c = setup(async url => {
+      ids.push(new URL(url).searchParams.get('requestId'))
+      return Response.json({ success: false, code, error: '金額を確認して、もう一度お試しください。' })
+    })
+    await assert.rejects(c.addTransaction('0001', -2000, 1000), { code })
+    assert.equal(c.sessionStorage.getItem('otomodachi-transaction-pending-0001'), null)
+    await assert.rejects(c.addTransaction('0001', -500, 1000), { code })
+    assert.notEqual(ids[0], ids[1])
+  }
+})
+
 const customer = { customerCode: '0001', customerName: 'Test', currentBalance: 1000 }
 function response(data, sourceUpdatedAt = '2026-10-23T00:00:00.000Z') {
   return Response.json({ success: true, data, sync: { sourceUpdatedAt, businessDate: '2026-10-23' } })
@@ -38,6 +52,26 @@ test('daily list views receive review metadata while prefetch keeps the array co
     assert.deepEqual(JSON.parse(JSON.stringify(await c[method]())), [customer])
     assert.deepEqual(JSON.parse(JSON.stringify(await c[method](true))), { data: [customer], excludedCustomers })
   }
+})
+
+test('registration preserves its identity after failure and clears only after a valid result', async () => {
+  const requests = []
+  let succeed = false
+  const c = setup(async url => {
+    requests.push(new URL(url).searchParams.get('requestId'))
+    return succeed ? response(customer) : Response.json({ success: false, code: 'REGISTRATION_RECONCILIATION_REQUIRED', error: 'Review' })
+  })
+  await assert.rejects(c.createCustomer('Test', 0))
+  const original = c.sessionStorage.getItem('otomodachi-registration-pending')
+  assert.ok(original)
+  c.clearLegacyFinancialCaches()
+  assert.equal(c.sessionStorage.getItem('otomodachi-registration-pending'), original)
+  await assert.rejects(c.createCustomer('Different', 0))
+  assert.equal(requests.length, 1)
+  succeed = true
+  await c.createCustomer('Test', 0)
+  assert.equal(requests[0], requests[1])
+  assert.equal(c.sessionStorage.getItem('otomodachi-registration-pending'), null)
 })
 
 test('legacy cache purge removes financial copies but preserves pending receipt and preferences', () => {

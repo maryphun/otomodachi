@@ -1213,10 +1213,23 @@ async function saveTransaction() {
     clearCustomerHistoryCache(customerCode.value)
     transactionSuccess.value = ''
 
-    transactionError.value =
-      ['BALANCE_CHANGED', 'CHECKOUT_NOT_ACTIVE', 'CLIENT_UPDATE_REQUIRED'].includes(error.code)
-        ? error.message
-        : '保存結果は未確認です。操作を繰り返さず、スタッフに記録の確認をお願いしてください。\n' + (error.message || '')
+    const rejected = ['BALANCE_CHANGED', 'CHECKOUT_NOT_ACTIVE', 'CLIENT_UPDATE_REQUIRED',
+      'CHIP_INPUT_INVALID', 'CHIP_INSUFFICIENT_BALANCE'].includes(error.code)
+    transactionError.value = rejected
+      ? error.message
+      : '保存結果は未確認です。操作を繰り返さず、スタッフに記録の確認をお願いしてください。\n' + (error.message || '')
+
+    if (rejected && error.code !== 'CLIENT_UPDATE_REQUIRED') {
+      try {
+        // Refresh before enabling retry; another device may have changed the balance.
+        customer.value = await getCustomer(customerCode.value, true)
+        presenceActiveToday.value = customer.value.activeToday
+        isBalanceUnverified.value = false
+        if (error.code === 'CHECKOUT_NOT_ACTIVE') selectedAction.value = ''
+      } catch {
+        transactionError.value += '\n最新の残高を取得できません。再読み込みしてからお試しください。'
+      }
+    }
   } finally {
     isSavingTransaction.value = false
   }

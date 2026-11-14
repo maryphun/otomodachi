@@ -420,15 +420,38 @@ function saveChipOperation(action, customerCode, amount, expectedBalance) {
     clearTodayActiveCustomersCache()
     return { ...result, customer }
   }).catch((error) => {
-    if (['CHECKOUT_NOT_ACTIVE', 'BALANCE_CHANGED', 'CLIENT_UPDATE_REQUIRED'].includes(error.code)) {
+    if (['CHECKOUT_NOT_ACTIVE', 'BALANCE_CHANGED', 'CLIENT_UPDATE_REQUIRED',
+      'CHIP_INPUT_INVALID', 'CHIP_INSUFFICIENT_BALANCE'].includes(error.code)) {
       sessionStorage.removeItem(key)
     }
     throw error
   }).finally(() => { writesInFlight-- })
 }
 
-export function createCustomer(customerName, initialBalance = 0) {
-  return apiGet('createCustomer', { customerName, initialBalance })
+export async function createCustomer(customerName, initialBalance = 0) {
+  const key = 'otomodachi-registration-pending'
+  const name = String(customerName || '').trim()
+  let pending
+  try {
+    pending = JSON.parse(sessionStorage.getItem(key) || 'null')
+    if (pending && (pending.customerName !== name || pending.initialBalance !== initialBalance)) {
+      throw new Error('Unresolved registration')
+    }
+    if (!pending) {
+      pending = { requestId: crypto.randomUUID(), customerName: name, initialBalance }
+      sessionStorage.setItem(key, JSON.stringify(pending))
+    }
+  } catch {
+    throw new Error('前回の新規登録を確認できません。再登録せず、メリーに確認して...!')
+  }
+  const result = await apiGet('createCustomer', pending).catch(error => {
+    if (['REGISTRATION_INPUT_INVALID', 'CLIENT_UPDATE_REQUIRED'].includes(error.code)) sessionStorage.removeItem(key)
+    throw error
+  })
+  const customer = normalizeCustomer(result)
+  if (customer.needsReconciliation) throw new Error('新規登録の結果を確認できません。')
+  sessionStorage.removeItem(key)
+  return customer
 }
 
 export function getCustomerPublicProfile(customerCode) {

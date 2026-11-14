@@ -73,7 +73,8 @@ export async function beginReadModelWrite(env, parameters) {
     `INSERT OR IGNORE INTO read_model_pending_writes (request_id, action, customer_code, started_at)
      SELECT ?1, ?2, ?3, ?4 WHERE NOT EXISTS (
        SELECT 1 FROM read_model_pending_writes
-       WHERE request_id != ?1 AND (customer_code = ?3 OR customer_code = '' OR ?3 = ''))`,
+       WHERE request_id != ?1 AND (
+         customer_code = '' OR (?2 != 'createCustomer' AND (customer_code = ?3 OR ?3 = ''))))`,
   ).bind(id, parameters.action, code, new Date().toISOString()).run()
   const saved = await db.prepare('SELECT action, customer_code FROM read_model_pending_writes WHERE request_id = ?').bind(id).first()
   if (!saved) throw reconciliationRequired()
@@ -84,6 +85,61 @@ export async function beginReadModelWrite(env, parameters) {
 
 export async function finishReadModelWrite(env, id) {
   await database(env).prepare('DELETE FROM read_model_pending_writes WHERE request_id = ?').bind(id).run()
+}
+
+function registrationUnconfirmed() {
+  const error = new Error('前回の新規登録を確認中です。再登録せず、メリーに確認して...!')
+  error.code = 'REGISTRATION_RECONCILIATION_REQUIRED'
+  error.status = 409
+  return error
+}
+
+export async function claimRegistration(env, parameters) {
+  if (!/^[A-Za-z0-9-]{16,80}$/.test(parameters.requestId || '')) {
+    const error = new Error('ページを再読み込みしてから登録してください。')
+    error.code = 'CLIENT_UPDATE_REQUIRED'
+    error.status = 409
+    throw error
+  }
+  const name = String(parameters.customerName || '').trim()
+  const amount = Number(parameters.initialBalance || 0)
+  if (!name || !Number.isSafeInteger(amount) || amount < 0) {
+    const error = new Error('お名前と初期うにょを確認してください。')
+    error.code = 'REGISTRATION_INPUT_INVALID'
+    error.status = 400
+    throw error
+  }
+  const db = database(env)
+  const fingerprint = await digest(JSON.stringify([name, amount]))
+  const now = new Date().toISOString()
+  const inserted = await db.prepare(`INSERT OR IGNORE INTO registration_requests
+    (request_id, fingerprint, status, created_at, updated_at)
+    VALUES (?, ?, 'pending', ?, ?) RETURNING request_id`)
+    .bind(parameters.requestId, fingerprint, now, now).first()
+  const row = await db.prepare('SELECT * FROM registration_requests WHERE request_id = ?')
+    .bind(parameters.requestId).first()
+  if (!row || row.fingerprint !== fingerprint) throw registrationUnconfirmed()
+  if (row.status === 'saved' && /^\d{4,}$/.test(row.customer_code)) {
+    return { replayed: true, customerCode: row.customer_code }
+  }
+  if (!inserted) throw registrationUnconfirmed()
+  return { replayed: false }
+}
+
+export async function recordRegistrationSaved(env, requestId, customerCode) {
+  if (!/^\d{4,}$/.test(customerCode || '')) throw registrationUnconfirmed()
+  const row = await database(env).prepare(`UPDATE registration_requests
+    SET status = 'saved', customer_code = ?, updated_at = ?
+    WHERE request_id = ? AND status = 'pending' RETURNING customer_code`)
+    .bind(customerCode, new Date().toISOString(), requestId).first()
+  if (!row) throw registrationUnconfirmed()
+}
+
+export async function releaseUnsentRegistration(env, requestId) {
+  await database(env).prepare("DELETE FROM read_model_pending_writes WHERE request_id = ? AND action = 'createCustomer' AND customer_code = ''")
+    .bind(requestId).run()
+  await database(env).prepare("DELETE FROM registration_requests WHERE request_id = ? AND status = 'pending'")
+    .bind(requestId).run()
 }
 
 export async function publishReadModel(env, snapshot, epoch) {

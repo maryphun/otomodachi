@@ -962,13 +962,13 @@ function addTransaction_(customerCode, chipChange, requestId, expectedBalance) {
       throw new Error('おともだちNo.が空です');
     }
 
-    if (!Number.isSafeInteger(change) || change === 0) {
-      throw new Error('うにょ数が正しくありません');
-    }
-
     const receipt = getCheckoutReceipt_(requestId, code, change, 'add');
     if (receipt && receipt.result) return { ...receipt.result, replayed: true };
     assertNoPendingChipWrite_(code);
+
+    if (!Number.isSafeInteger(change) || change === 0) {
+      throw chipRejectedError_('CHIP_INPUT_INVALID', 'うにょ数が正しくありません。0以外の整数を入力して、もう一度お試しください。今回のうにょ変更は保存していません。');
+    }
 
     const masterRecord = getCustomerMasterRecord_(code);
     const customer = masterRecord.customer;
@@ -1023,9 +1023,7 @@ function addTransaction_(customerCode, chipChange, requestId, expectedBalance) {
         !Number.isSafeInteger(nextBalance)) throw verificationError_();
 
     if (nextBalance < 0) {
-      throw new Error(
-        '現在のうにょを超えて引き出すことはできません',
-      );
+      throw chipRejectedError_('CHIP_INSUFFICIENT_BALANCE', '残高より多いうにょは引き出せません。金額を確認して、もう一度お試しください。今回のうにょ変更は保存していません。');
     }
 
     claimChipReceipt_(receipt, requestId, code, change);
@@ -1172,19 +1170,15 @@ function checkoutCustomer_(customerCode, endingAmount, requestId, expectedBalanc
       throw new Error('おともだちNo.が空です');
     }
 
-    if (
-      !Number.isFinite(amount) ||
-      amount < 0 ||
-      !Number.isInteger(amount)
-    ) {
-      throw new Error('退店時のうにょ数が正しくありません');
-    }
-
     const receipt = getCheckoutReceipt_(requestId, code, amount);
     if (receipt && receipt.result) {
       return { ...receipt.result, replayed: true };
     }
     assertNoPendingChipWrite_(code);
+
+    if (!Number.isSafeInteger(amount) || amount < 0) {
+      throw chipRejectedError_('CHIP_INPUT_INVALID', '退店時のうにょ数は0以上の整数を入力してください。金額を確認して、もう一度お試しください。今回のうにょ変更は保存していません。');
+    }
 
     const masterRecord = getCustomerMasterRecord_(code);
     const customer = masterRecord.customer;
@@ -1355,6 +1349,13 @@ function assertNoPendingChipWrite_(code) {
       throw verificationError_();
     }
   }
+}
+
+// Only use for explicit rejections after receipt checks and before claiming a write.
+function chipRejectedError_(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
 }
 
 function assertExpectedBalance_(currentBalance, expectedBalance) {

@@ -180,6 +180,7 @@ try {
     for (const context of contexts) await context.close()
     const recoveryContext = await browser.newContext({ viewport })
     const recovery = await recoveryContext.newPage()
+    let registrations = 0
     recovery.on('pageerror', error => errors.push(error.message))
     await recovery.clock.install()
     await recovery.addInitScript(() => {
@@ -192,6 +193,12 @@ try {
       if (!action) return route.continue()
       const sync = { sourceUpdatedAt: '2026-11-03T07:00:00.000Z', businessDate: '2026-11-03', pendingRevision: 'pending-customer' }
       let data
+      if (action === 'createCustomer') {
+        registrations++
+        assert.ok(url.searchParams.get('requestId'))
+        return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true,
+          data: { customerCode: '0001', customerName: '検証用', currentBalance: 1000 }, sync }) })
+      }
       if (action === 'getSyncStatus') data = { ...sync, pendingCustomerCodes: ['0425'],
         pendingCustomers: [{ customerCode: '0425', customerName: '確認用さん' }] }
       else if (action === 'getAllCustomers') data = [
@@ -237,6 +244,14 @@ try {
     await recovery.locator('.balance-panel strong').filter({ hasText: /^1,000$/ }).waitFor()
     await recovery.clock.runFor(31000)
     assert.equal(await recovery.locator('.sync-unavailable').count(), 0)
+    assert.ok(await recovery.evaluate(() => sessionStorage.getItem('otomodachi-checkout-pending-0425')))
+    await recovery.goto(base + '/#/new-customer')
+    await recovery.locator('.name-input').fill('検証用')
+    recovery.once('dialog', dialog => dialog.accept())
+    await recovery.locator('.register-button').click()
+    await recovery.locator('.balance-panel strong').filter({ hasText: /^1,000$/ }).waitFor()
+    assert.equal(registrations, 1)
+    assert.equal(await recovery.evaluate(() => sessionStorage.getItem('otomodachi-registration-pending')), null)
     assert.ok(await recovery.evaluate(() => sessionStorage.getItem('otomodachi-checkout-pending-0425')))
     await recovery.goto(base + '/#/today-active-customers')
     await recovery.locator('.customer-list .customer-card').filter({ hasText: '検証用' }).waitFor()

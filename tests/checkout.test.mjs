@@ -91,6 +91,37 @@ function setup() {
   return { context, daily, sheets, logs, balance: () => balance, locked: () => locked }
 }
 
+test('clear input and insufficient balance rejections do not save chips and allow corrected requests', () => {
+  const s = setup()
+  s.context.getOrCreateTodaySheet_ = () => s.daily
+  const before = JSON.stringify(s.daily.rows)
+  for (const amount of [0, 1.5, 'invalid', Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => s.context.addTransaction_('0079', amount, requestId), { code: 'CHIP_INPUT_INVALID' })
+  }
+  assert.throws(() => s.context.addTransaction_('0079', -2000000, requestId), { code: 'CHIP_INSUFFICIENT_BALANCE' })
+  for (const amount of [-1, 1.5, 'invalid', Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => s.context.checkoutCustomer_('0079', amount, requestId), { code: 'CHIP_INPUT_INVALID' })
+  }
+  assert.equal(JSON.stringify(s.daily.rows), before)
+  assert.equal(s.logs.length, 0)
+  assert.equal(s.sheets.get('_WebappTransactionReceipts').rows.length, 1)
+  assert.equal(s.sheets.get('_WebappCheckoutReceipts').rows.length, 1)
+  assert.equal(s.context.addTransaction_('0079', -1000, 'corrected-request-0001').newBalance, 1194100)
+})
+
+test('invalid input never disguises an existing pending or completed receipt as retryable', () => {
+  for (const fail of [false, true]) {
+    const s = setup()
+    s.context.getOrCreateTodaySheet_ = () => s.daily
+    if (fail) s.context.writeDailyConfirmedBalance_ = () => { throw new Error('interrupted') }
+    try { s.context.addTransaction_('0079', 1000, requestId) } catch { /* deliberately interrupted */ }
+    assert.throws(() => s.context.addTransaction_('0079', 0, requestId), error => error.code !== 'CHIP_INPUT_INVALID')
+    if (fail) {
+      assert.throws(() => s.context.addTransaction_('0079', 0, 'new-invalid-request-0001'), { code: 'RECORD_VERIFICATION_REQUIRED' })
+    }
+  }
+})
+
 test('four identical checkouts credit 45,000 once and return the original receipt', () => {
   const s = setup()
   for (let i = 0; i < 4; i++) {
@@ -569,6 +600,44 @@ test('transaction handler ignores a second call while checkout is saving and clo
   assert.equal(context.isSavingTransaction.value, false)
   assert.equal(context.selectedAction.value, '')
   assert.equal(context.customer.value.currentBalance, 1240100)
+})
+
+test('clear rejections show their reason and enable retry only after a verified balance refresh', async () => {
+  const source = readFileSync(new URL('../src/views/CustomerView.vue', import.meta.url), 'utf8')
+  const handler = source.slice(source.indexOf('async function saveTransaction()'), source.indexOf('function getActionName('))
+  for (const refreshFails of [false, true]) {
+    let calls = 0
+    const context = vm.createContext({
+      console: { error() {} },
+      isSavingTransaction: { value: false }, isBalanceUnverified: { value: false },
+      customer: { value: { customerCode: '0079', customerName: 'Test', currentBalance: 1195100 } },
+      transactionError: { value: '' }, transactionSuccess: { value: '' },
+      transactionAmount: { value: 45000 }, selectedAction: { value: 'withdrawal' },
+      transactionValidationMessage: { value: '' }, transactionChange: { value: -45000 },
+      currentBalance: { value: 1195100 }, customerCode: { value: '0079' }, history: { value: [] },
+      presenceActiveToday: { value: true }, amountText: { value: '45000' },
+      getActionName: () => 'withdrawal', displayCustomerName: String, formatNumber: String, formatSignedNumber: String,
+      clearCustomerHistoryCache() {},
+      addTransaction() {
+        calls++
+        throw Object.assign(new Error('残高より多いうにょは引き出せません。'), { code: 'CHIP_INSUFFICIENT_BALANCE' })
+      },
+      getCustomer: async () => {
+        if (refreshFails) throw new Error('Read unavailable')
+        return { customerCode: '0079', currentBalance: 1000, activeToday: true }
+      },
+      window: { confirm: () => true },
+    })
+    vm.runInContext(handler, context)
+    await context.saveTransaction()
+    assert.match(context.transactionError.value, /残高より/)
+    assert.doesNotMatch(context.transactionError.value, /スタッフ|メリー|保存結果は未確認/)
+    assert.equal(context.isBalanceUnverified.value, refreshFails)
+    assert.equal(context.amountText.value, '45000')
+    await context.saveTransaction()
+    assert.equal(calls, refreshFails ? 1 : 2)
+    if (!refreshFails) assert.equal(context.customer.value.currentBalance, 1000)
+  }
 })
 
 test('failed save hides the balance and cannot be submitted a second time as a new operation', async () => {

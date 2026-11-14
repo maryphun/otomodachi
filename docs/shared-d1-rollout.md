@@ -6,6 +6,26 @@ rollout sequence, including its temporary disabled state; they are not instructi
 to disable an already-active installation. Follow the recovery section for an
 existing deployment.
 
+## 1.12.2 registration recovery (2026-11-03)
+
+Known-customer pending operations no longer block a new registration. Apply
+`0003_registration_requests.sql` to remote ATTENDANCE_DB before deploying this
+release. No Apps Script change is required.
+
+The browser persists the registration request ID before sending. D1 stores only
+request identity, an input fingerprint, assigned customer code and timestamps,
+not chip balances or financial transactions. A unique pending-registration index
+allows only one uncertain registration at a time. The Worker dispatches a claimed
+registration to Sheets once. After a confirmed response it records the assigned
+code durably and verifies the customer through a fresh shared snapshot. Reopening
+a saved request performs synchronization/readback only, never another creation.
+
+If the upstream result is unknown, the request stays protected for manual review;
+it is not cleared by elapsed time or the absence of a receipt. An unresolved
+registration without an assigned code retains the existing global read guard.
+Old clients without registration request IDs must reload before registering.
+Do not delete registration records or retry with a new ID to bypass this protection.
+
 ## 1.12.1 recovery behavior (2026-11-03)
 
 After a fresh, clean snapshot is published, an unresolved operation for a known
@@ -269,6 +289,22 @@ or retaining the new reads until synchronization is repaired. QR links and
 receipt sheets must be preserved. Reverting Worker code never reverts Sheets.
 
 ## Read recovery in the browser
+
+### Explicit chip rejections
+
+`CHIP_INPUT_INVALID` and `CHIP_INSUFFICIENT_BALANCE` are explicit pre-save
+rejections. Apps Script checks existing receipts and pending operations before
+emitting either code. The Worker releases only that request's D1 barrier and
+attempts read synchronization; the browser clears that request ID and displays
+the specific Japanese error. The transaction form becomes usable again only
+after a fresh customer read succeeds. Invalid input or insufficient funds must
+not be inferred from generic errors, timeouts, or a missing receipt.
+
+Deploy the Worker/frontend support first, then update and version-deploy the
+matching `appscript/Code.gs` (`appscript-full/Webapp用.txt` is its mirror).
+An older Apps Script deployment will still return generic errors for these
+cases. This change does not resolve existing pending operations, add automatic
+write retries, or implement unknown-outcome recovery or diagnostic storage.
 
 Temporary `READ_MODEL_UNAVAILABLE` or out-of-order read responses are retried
 up to five times within the existing 15-second read budget. Writes are never
